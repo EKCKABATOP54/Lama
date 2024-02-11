@@ -843,7 +843,7 @@ class env prg =
       let x, n =
         let allocate' = function
         | S n :: _ -> (S (n + 2), n + 3) (*One posiiton for type*)
-        | _ -> (S (2*static_size + 1), static_size + 1) (*One posiiton for type*)
+        | _ -> (S (2*static_size + 1), static_size + 2) (*One posiiton for type*)
         in
         allocate' stack
       in
