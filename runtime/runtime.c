@@ -697,7 +697,7 @@ extern PACKED_VALUE_TYPE Belem (void *p, void* p_type, int i, void* i_type) {
     case STRING_TAG: return pack_type((void *)BOX(a->contents[i]), INT_OPND_TYPE);
     case SEXP_TAG: return pack_type((void *)((int *)a->contents)[i + 1], SEXP_OPND_TYPE);
     //case SEXP_TAG: return (void *)((int *)a->contents)[(2*i + 1) + 1];//[{type1, el1}, {type2, el2}, {type3, el3}, {type4, el4}..]
-    default: return pack_type((void *)((int *)a->contents)[2*i + 1], INT_OPND_TYPE);         //[{type1, el1}, {type2, el2}, {type3, el3}, {type4, el4}..]
+    default: return pack_type((void *)((int *)a->contents)[2*i + 1], (void *)((int *)a->contents)[2*i]);         //[{type1, el1}, {type2, el2}, {type3, el3}, {type4, el4}..]
   }
 }
 
@@ -840,7 +840,7 @@ extern void *Barray (int bn, void* bn_type, ...) { //TODO: FIX_TYPES
   for (i = 0; i < n; i++) {
     ai                      = va_arg(args, int);
     ai_type                 = va_arg(args, int); 
-    //TODO: move types
+    ((int *)r->contents)[2*i]   = ai_type;
     ((int *)r->contents)[2*i+1] = ai; //[{type1, el1}, {type2, el2}, {type3, el3}, {type4, el4}..]
   }
 

@@ -76,7 +76,6 @@ typedef struct {
 
 #define OPND_TYPE_T void*
 
-//#define ANY_OPND_TYPE 777
 #define UNDEFINED_OPND_TYPE 777
 #define INT_OPND_TYPE 222
 #define STR_OPND_TYPE 333

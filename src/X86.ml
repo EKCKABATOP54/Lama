@@ -91,7 +91,7 @@ type instr =
 
 let type_loc op = match op with
   | R _ -> failwith "Unable to set type of R opnd"
-  | S n -> S (n-1)
+  | S n -> if n >=0 then S (n-1) else S (n+1)
   | C -> failwith "Unable to set type of C opnd"
   | M l -> M (Printf.sprintf ("%s_type") l)
   | L _ -> failwith "Unable to set type of L opnd"
@@ -833,7 +833,7 @@ class env prg =
       match x with
       | Value.Global name -> M ("global_" ^ name)
       | Value.Fun name -> M ("$" ^ name)
-      | Value.Local i -> S i
+      | Value.Local i -> S (2*i + 1)
       | Value.Arg i -> S (-(2*i + if has_closure then 2 else 1))
       | Value.Access i -> I (word_size * (i + 1), edx)
 
@@ -843,7 +843,7 @@ class env prg =
       let x, n =
         let allocate' = function
         | S n :: _ -> (S (n + 2), n + 3) (*One posiiton for type*)
-        | _ -> (S (2*static_size + 1), static_size + 2) (*One posiiton for type*)
+        | _ -> (S (static_size + 1), static_size + 2) (*One posiiton for type*)
         in
         allocate' stack
       in
@@ -926,8 +926,8 @@ class env prg =
     (* enters a function *)
     method enter f nargs nlocals has_closure =
       {<nargs
-       ; static_size = nlocals
-       ; stack_slots = nlocals
+       ; static_size = 2*nlocals
+       ; stack_slots = 2*nlocals
        ; stack = []
        ; fname = f
        ; has_closure
