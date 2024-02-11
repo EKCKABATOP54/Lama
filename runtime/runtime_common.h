@@ -70,4 +70,17 @@ typedef struct {
   int    contents[0];
 } sexp;
 
+
+
+#define PACKED_VALUE_TYPE long long
+
+#define OPND_TYPE_T void*
+
+//#define ANY_OPND_TYPE 777
+#define UNDEFINED_OPND_TYPE 777
+#define INT_OPND_TYPE 222
+#define STR_OPND_TYPE 333
+#define ARR_OPND_TYPE 444
+#define SEXP_OPND_TYPE 555
+
 #endif

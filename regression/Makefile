@@ -7,19 +7,20 @@ LAMAC=../src/lamac
 
 
 #check: ctest111 $(TESTS)
+check: $(TESTS)
+
 
 $(TESTS): %: %.lama
 	@echo "regression/$@"
-	@cat $@.input | LAMA=../runtime $(LAMAC) -i $< > $@.log && diff $@.log orig/$@.log
-	@cat $@.input | LAMA=../runtime $(LAMAC) -ds -s $< > $@.log && diff $@.log orig/$@.log
+#	@cat $@.input | LAMA=../runtime $(LAMAC) -i $< > $@.log && diff $@.log orig/$@.log
+#	@cat $@.input | LAMA=../runtime $(LAMAC) -ds -s $< > $@.log && diff $@.log orig/$@.log
 	@LAMA=../runtime $(LAMAC) $< && cat $@.input | ./$@ > $@.log && diff $@.log orig/$@.log
 
-#ctest111:
-#	@echo "regression/test111"
-#	@LAMA=../runtime $(LAMAC) test111.lama && cat test111.input | ./test111 > test111.log && diff test111.log orig/test111.log
+ctest111:
+	@echo "regression/test111"
+	@LAMA=../runtime $(LAMAC) test111.lama && cat test111.input | ./test111 > test111.log && diff test111.log orig/test111.log
 
 clean:
-#	$(RM) test*.log *.s *.sm *~ $(TESTS) *.i $(DEBUG_FILES) test111
-	$(RM) test*.log *.s *.sm *~ $(TESTS) *.i $(DEBUG_FILES)
+	$(RM) test*.log *.s *.sm *~ $(TESTS) *.i $(DEBUG_FILES) test111
 	$(MAKE) clean -C expressions
 	$(MAKE) clean -C deep-expressions

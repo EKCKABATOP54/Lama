@@ -12,6 +12,7 @@ let num_of_regs = Array.length regs - 5
 (* We need to know the word size to calculate offsets correctly *)
 let word_size = 4
 
+(* opnd - 1 = opnd_type *)
 (* We need to distinguish the following operand types: *)
 type opnd =
   | R of int (* hard register                    *)
@@ -20,6 +21,13 @@ type opnd =
   | M of string (* a named memory location          *)
   | L of int (* an immediate operand             *)
   | I of int * opnd (* an indirect operand with offset  *)
+[@@deriving gt ~options:{ show }]
+
+type opnd_type =
+  | UndefinedOpnd
+  | IntOpnd
+  | StrOpnd
+  | ArrOpnd
 [@@deriving gt ~options:{ show }]
 
 let show_opnd = show opnd
@@ -78,6 +86,31 @@ type instr =
   (* arithmetic correction: shr 1                          *)
   | Sar1 of opnd
   | Repmovsl
+
+
+
+let type_loc op = match op with
+  | R _ -> failwith "Unable to set type of R opnd"
+  | S n -> S (n-1)
+  | C -> failwith "Unable to set type of C opnd"
+  | M l -> M (Printf.sprintf ("%s_type") l)
+  | L _ -> failwith "Unable to set type of L opnd"
+  | I (offset, opnd) -> I (offset -1, opnd)
+
+let type_tag t = match t with
+  | UndefinedOpnd -> 777
+  | IntOpnd -> 222
+  | StrOpnd -> 333
+  | ArrOpnd -> 444
+
+let set_opnd_type op t = [Mov (L (type_tag t), type_loc op)]
+
+
+let mov_opnd_type op1 op2= 
+  let type_loc1 = type_loc op1 in
+  let type_loc2 = type_loc op2 in
+  [Mov (type_loc1, eax); Mov(eax, type_loc2)]
+  
 
 (* Instruction printer *)
 let stack_offset i =
@@ -160,6 +193,7 @@ let compile cmd env imports code =
     in
     let callc env n tail =
       let tail = tail && env#nargs = n in
+      (*
       if tail then
         let rec push_args env acc = function
           | 0 -> (env, acc)
@@ -180,6 +214,7 @@ let compile cmd env imports code =
           @ (if env#has_closure then [ Pop ebx ] else [])
           @ [ Jmp "*%eax" ] ) (* UGLY!!! *)
       else
+      *)
         let pushr, popr =
           List.split
           @@ List.map (fun r -> (Push r, Pop r)) (env#live_registers n)
@@ -206,7 +241,7 @@ let compile cmd env imports code =
             @ List.rev popr )
         in
         let y, env = env#allocate in
-        (env, code @ [ Mov (eax, y) ])
+        (env, code @ [ Mov (eax, y) ; Mov (edx, type_loc y) ])
     in
     let call env f n tail =
       let tail = tail && env#nargs = n && f.[0] <> '.' in
@@ -215,6 +250,7 @@ let compile cmd env imports code =
         | '.' -> "B" ^ String.sub f 1 (String.length f - 1)
         | _ -> f
       in
+      (*
       if tail then
         let rec push_args env acc = function
           | 0 -> (env, acc)
@@ -231,7 +267,8 @@ let compile cmd env imports code =
           @ [ Mov (ebp, esp); Pop ebp ]
           @ (if env#has_closure then [ Pop ebx ] else [])
           @ [ Jmp f ] )
-      else
+      else 
+      *)
         let pushr, popr =
           List.split
           @@ List.map (fun r -> (Push r, Pop r)) (env#live_registers n)
@@ -242,14 +279,14 @@ let compile cmd env imports code =
             | 0 -> (env, acc)
             | n ->
                 let x, env = env#pop in
-                push_args env (Push x :: acc) (n - 1)
+                push_args env (Push x :: Push ( type_loc x) :: acc) (n - 1)
           in
           let env, pushs = push_args env [] n in
           let pushs =
             match f with
-            | "Barray" -> List.rev @@ (Push (L (box n)) :: pushs)
-            | "Bsexp" -> List.rev @@ (Push (L (box n)) :: pushs)
-            | "Bsta" -> pushs
+            | "Barray" -> List.rev @@ (Push (L (box n)) :: Push (L (type_tag IntOpnd)) :: pushs)
+            | "Bsexp" -> List.rev @@ (Push (L (box n)) :: Push (L (type_tag IntOpnd)) :: pushs)
+            | "Bsta" -> List.rev pushs
             | _ -> List.rev pushs
           in
           ( env,
@@ -258,7 +295,7 @@ let compile cmd env imports code =
             @ List.rev popr )
         in
         let y, env = env#allocate in
-        (env, code @ [ Mov (eax, y) ])
+        (env, code @ [ Mov (eax, y) ; Mov (edx, type_loc y)]) (*must set return value type*)
     in
     match scode with
     | [] -> (env, [])
@@ -302,12 +339,14 @@ let compile cmd env imports code =
                   @ List.rev popr @ env#reload_closure )
             | CONST n ->
                 let s, env' = env#allocate in
-                (env', [ Mov (L (box n), s) ])
+                (env', (set_opnd_type s IntOpnd) @ [ Mov (L (box n), s) ])
+                
+
             | STRING s ->
                 let s, env = env#string s in
                 let l, env = env#allocate in
                 let env, call = call env ".string" 1 false in
-                (env, Mov (M ("$" ^ s), l) :: call)
+                (env, (set_opnd_type l StrOpnd) @ (Mov (M ("$" ^ s), l) :: call))
             | LDA x ->
                 let s, env' = (env#variable x)#allocate in
                 let s', env'' = env'#allocate in
@@ -315,16 +354,30 @@ let compile cmd env imports code =
             | LD x -> (
                 let s, env' = (env#variable x)#allocate in
                 ( env',
+                  let xloc = env'#loc x in
+                  let mov' a b =  [ Mov (a, eax); Mov (eax, b) ]  in
+                  (mov' xloc s) @ (mov' (type_loc xloc) (type_loc s))
+                (*
                   match s with
                   | S _ | M _ -> [ Mov (env'#loc x, eax); Mov (eax, s) ]
-                  | _ -> [ Mov (env'#loc x, s) ] ))
+                  | _ -> [ Mov (env'#loc x, s) ] 
+                *)
+
+                  )
+                  )
             | ST x -> (
                 let env' = env#variable x in
                 let s = env'#peek in
                 ( env',
+                  let xloc = env'#loc x in
+                  let mov' a b =  [ Mov (a, eax); Mov (eax, b) ]  in
+                  (mov' s xloc) @ (mov' (type_loc s) (type_loc xloc))
+                  (*
                   match s with
                   | S _ | M _ -> [ Mov (s, eax); Mov (eax, env'#loc x) ]
-                  | _ -> [ Mov (s, env'#loc x) ] ))
+                  | _ -> [ Mov (s, env'#loc x) ] 
+                  *)
+                  ))
             | STA -> call env ".sta" 3 false
             | STI -> (
                 let v, x, env' = env#pop2 in
@@ -342,6 +395,10 @@ let compile cmd env imports code =
             | BINOP op -> (
                 let x, y, env' = env#pop2 in
                 ( env'#push y,
+
+                (*check_stack_types(int, int, int, "")*)
+                  
+                  (
                   (* (match op with
                      |"<" | "<=" | "==" | "!=" | ">=" | ">" ->
                       [Push (eax);
@@ -478,7 +535,7 @@ let compile cmd env imports code =
                   | _ ->
                       failwith
                         (Printf.sprintf "Unexpected pattern: %s: %d" __FILE__
-                           __LINE__) ))
+                           __LINE__) )))
             | LABEL s | FLABEL s | SLABEL s -> (env, [ Label s ])
             | JMP l -> ((env#set_stack l)#set_barrier, [ Jmp l ])
             | CJMP (s, l) ->
@@ -526,7 +583,7 @@ let compile cmd env imports code =
                         Meta
                           (Printf.sprintf "\t.stabs \"%s:F1\",36,0,0,%s" name f);
                       ]
-                      @ List.mapi
+                      @ List.mapi (*Probably wrong*)
                           (fun i a ->
                             Meta
                               (Printf.sprintf "\t.stabs \"%s:p1\",160,0,0,%d" a
@@ -638,7 +695,7 @@ let compile cmd env imports code =
             | ARRAY n ->
                 let s, env = env#allocate in
                 let env, code = call env ".array_patt" 2 false in
-                (env, [ Mov (L (box n), s) ] @ code)
+                (env, [ Mov (L (box n), s)] @ set_opnd_type s IntOpnd @ code)
             | PATT StrCmp -> call env ".string_patt" 2 false
             | PATT patt ->
                 call env
@@ -777,21 +834,22 @@ class env prg =
       | Value.Global name -> M ("global_" ^ name)
       | Value.Fun name -> M ("$" ^ name)
       | Value.Local i -> S i
-      | Value.Arg i -> S (-(i + if has_closure then 2 else 1))
+      | Value.Arg i -> S (-(2*i + if has_closure then 2 else 1))
       | Value.Access i -> I (word_size * (i + 1), edx)
 
-    (* allocates a fresh position on a symbolic stack *)
+    (*Now allocates all values on stack to easy access to type*)
+    (*TODO: allocate only values with types*)
     method allocate =
       let x, n =
         let allocate' = function
-          | [] -> (ebx, 0)
-          | S n :: _ -> (S (n + 1), n + 2)
-          | R n :: _ when n < num_of_regs -> (R (n + 1), stack_slots)
-          | _ -> (S static_size, static_size + 1)
+        | S n :: _ -> (S (n + 2), n + 3) (*One posiiton for type*)
+        | _ -> (S (2*static_size + 1), static_size + 1) (*One posiiton for type*)
         in
         allocate' stack
       in
       (x, {<stack_slots = max n stack_slots; stack = x :: stack>})
+    
+
 
     (* pushes an operand to the symbolic stack *)
     method push y = {<stack = y :: stack>}
@@ -825,7 +883,7 @@ class env prg =
     (* registers a variable in the environment *)
     method variable x =
       match x with
-      | Value.Global name -> {<globals = S.add ("global_" ^ name) globals>}
+      | Value.Global name -> let globals' = S.add ("global_" ^ name) globals in {<globals = S.add ("global_" ^ name ^ "_type") globals'>}
       | _ -> self
 
     (* registers a string constant *)
@@ -914,7 +972,7 @@ let genasm cmd prog =
   let sm = SM.compile cmd prog in
   let env, code = compile cmd (new env sm) (fst (fst prog)) sm in
   let globals =
-    List.map (fun s -> Meta (Printf.sprintf "\t.globl\t%s" s)) env#publics
+    List.map (fun s -> Meta (Printf.sprintf "\t.globl\t%s\n\t.globl\t%s_type" s s)) env#publics
   in
   let data =
     [ Meta "\t.data" ]
