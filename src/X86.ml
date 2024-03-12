@@ -1,13 +1,15 @@
+(* TODO: CLOSURES*)
+
 open GT
 open Language
 
 (* X86 codegeneration interface *)
 
 (* The registers: *)
-let regs = [| "%ebx"; "%ecx"; "%esi"; "%edi"; "%eax"; "%edx"; "%ebp"; "%esp" |]
+let regs = [| "%ecx"; "%esi"; "%edi"; "%eax"; "%ebx"; "%edx"; "%ebp"; "%esp" |]
 
-(* We can not freely operate with all register; only 3 by now *)
-let num_of_regs = Array.length regs - 5
+(* We can not freely operate with all register; only 2 by now *)
+let num_of_regs = Array.length regs - 6
 
 (* We need to know the word size to calculate offsets correctly *)
 let word_size = 4
@@ -33,11 +35,11 @@ type opnd_type =
 let show_opnd = show opnd
 
 (* For convenience we define the following synonyms for the registers: *)
-let ebx = R 0
-let ecx = R 1
-let esi = R 2
-let edi = R 3
-let eax = R 4
+let ecx = R 0
+let esi = R 1
+let edi = R 2
+let eax = R 3
+let ebx = R 4
 let edx = R 5
 let ebp = R 6
 let esp = R 7
@@ -91,7 +93,7 @@ type instr =
 
 let type_loc op = match op with
   | R _ -> failwith "Unable to set type of R opnd"
-  | S n -> if n >=0 then S (n-1) else S (n+1)
+  | S n -> (match n with 0 -> failwith "invalid op loc" | _ ->  if n > 0 then S (n-1) else S (n-1))
   | C -> failwith "Unable to set type of C opnd"
   | M l -> M (Printf.sprintf ("%s_type") l)
   | L _ -> failwith "Unable to set type of L opnd"
@@ -225,7 +227,7 @@ let compile cmd env imports code =
             | 0 -> (env, acc)
             | n ->
                 let x, env = env#pop in
-                push_args env (Push x :: acc) (n - 1)
+                push_args env (Push x :: Push ( type_loc x) :: acc) (n - 1)
           in
           let env, pushs = push_args env [] n in
           let pushs = List.rev pushs in
@@ -241,7 +243,8 @@ let compile cmd env imports code =
             @ List.rev popr )
         in
         let y, env = env#allocate in
-        (env, code @ [ Mov (eax, y) ; Mov (edx, type_loc y) ])
+        (env, code @ [Mov(I(4, eax), ebx); Mov(ebx, y); Mov(I(0, eax), ebx); Mov(ebx,type_loc y)]) (* in eax - adress of {ret_type, ret_a}. Tranfer to stack via ebx*)
+        (*(env, code @ [ Mov (eax, y) ; Mov (edx, type_loc y) ])*)
     in
     let call env f n tail =
       let tail = tail && env#nargs = n && f.[0] <> '.' in
@@ -295,7 +298,10 @@ let compile cmd env imports code =
             @ List.rev popr )
         in
         let y, env = env#allocate in
-        (env, code @ [ Mov (eax, y) ; Mov (edx, type_loc y)]) (*must set return value type*)
+        (env, code @ [Mov(I(4, eax), ebx); Mov(ebx, y); Mov(I(0, eax), ebx); Mov(ebx,type_loc y)]) (* in eax - adress of {ret_type, ret_a}. Tranfer to stack via ebx*)
+        (*
+        (env, code @ [ Mov (eax, y) ; Mov (edx, type_loc y)])
+        *)
     in
     match scode with
     | [] -> (env, [])
@@ -324,7 +330,8 @@ let compile cmd env imports code =
                 in
                 let closure_len = List.length closure in
                 let push_closure =
-                  List.map (fun d -> Push (env#loc d)) @@ List.rev closure
+                  List.fold_left (fun acc inner_list -> acc @ inner_list) [] (List.map (fun d -> [Push (env#loc d); Push (type_loc (env#loc d)) ]) @@ List.rev closure)
+                  (*List.map (fun d -> Push (env#loc d)) @@ List.rev closure *)
                 in
                 let s, env = env#allocate in
                 ( env,
@@ -646,7 +653,19 @@ let compile cmd env imports code =
                 let name = env#fname in
                 ( env#leave,
                   [
-                    Mov (x, eax);
+                    (*Need to store return value in defualt return value location and move it address to eax*)
+                    (*default_return_memory_loc() returns in eax default adress*)
+                    Call ("default_return_memory_loc"); (*Now default adress stored in eax. We need to transfer values via ebx*)
+
+                    (*Transfering value*)
+                    Mov (x, ebx);
+                    Mov (ebx, I(4, eax));
+
+                    (*Transfering value type*)
+                    Mov (type_loc x, ebx);
+                    Mov (ebx, I(0, eax));
+
+                    (*Mov (x, eax);*)
                     (*!!*)
                     Label env#epilogue;
                     Mov (ebp, esp);
@@ -676,12 +695,12 @@ let compile cmd env imports code =
             | SEXP (t, n) ->
                 let s, env = env#allocate in
                 let env, code = call env ".sexp" (n + 1) false in
-                (env, [ Mov (L (box (env#hash t)), s) ] @ code)
+                (env, [ Mov (L (box (env#hash t)), s) ] @ code) (*TODO: move type*)
             | DROP -> (snd env#pop, [])
             | DUP ->
                 let x = env#peek in
                 let s, env = env#allocate in
-                (env, mov x s)
+                (env, (mov x s) @ (mov (type_loc x) (type_loc s)))
             | SWAP ->
                 let x, y = env#peek2 in
                 (env, [ Push x; Push y; Pop x; Pop y ])
