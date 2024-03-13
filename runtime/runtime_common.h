@@ -72,14 +72,13 @@ typedef struct {
 
 
 
-#define PACKED_VALUE_TYPE long long
-
+#define PACKED_VALUE_TYPE void*
 #define OPND_TYPE_T void*
 
-#define UNDEFINED_OPND_TYPE 777
-#define INT_OPND_TYPE 222
-#define STR_OPND_TYPE 333
-#define ARR_OPND_TYPE 444
-#define SEXP_OPND_TYPE 555
+#define UNDEFINED_OPND_TYPE (OPND_TYPE_T)777
+#define INT_OPND_TYPE (OPND_TYPE_T)222
+#define STR_OPND_TYPE (OPND_TYPE_T)333
+#define ARR_OPND_TYPE (OPND_TYPE_T)444
+#define SEXP_OPND_TYPE (OPND_TYPE_T)555
 
 #endif

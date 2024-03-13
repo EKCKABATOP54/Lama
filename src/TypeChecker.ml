@@ -22,6 +22,20 @@ let rec is_consistent t1 t2 = match (t1, t2) with
 
 let is_consistent_type_flows tf1 tf2 = List.fold_left (fun acc t1 -> List.fold_left (fun acc t2 -> acc && is_consistent t1 t2) acc tf2 ) true tf1
 
+let rec is_consistent_patt patt t = match patt with 
+                                      Pattern.Wildcard -> true
+                                      | Pattern.Sexp _ -> is_consistent Sexp t
+                                      | Pattern.Array _ -> is_consistent Array t
+                                      | Pattern.Named (_, p) -> is_consistent_patt p t
+                                      | Pattern.Const _ -> is_consistent Int t 
+                                      | Pattern.String _ -> is_consistent String t 
+                                      | Pattern.Boxed -> raise (Failure "not implemented")
+                                      | Pattern.UnBoxed -> raise (Failure "not implemented")
+                                      | Pattern.StringTag -> is_consistent String t 
+                                      | Pattern.SexpTag -> is_consistent Sexp t 
+                                      | Pattern.ArrayTag -> is_consistent Array t 
+                                      | Pattern.ClosureTag -> raise (Failure "not implemented")
+
 module TypeContext : sig
   type t
   val add_types_to_type_flow : t -> string -> lamaType list -> t
@@ -134,7 +148,10 @@ let rec check_expr ctx = function
                                   let rec update_ctx old_ctx e = let (_, new_ctx) = check_expr old_ctx e in if new_ctx <> old_ctx then update_ctx new_ctx e else new_ctx in
                                   ([], update_ctx ctx e)
 
-  | Expr.Case _ -> raise (Failure "Not implemented")
+  | Expr.Case (e, ls, _, _) ->    let (e_type_flow, e_ctx) = check_expr ctx e in
+                                  List.iter (fun t -> if List.fold_left (fun acc patt_t -> is_consistent_patt patt_t t || acc) false (List.map (fun (p, _) -> p) ls ) then () else raise (Failure (Printf.sprintf "No pattern for type %s" (type_to_string t)))  ) e_type_flow;
+                                  List.fold_left (fun (t_flow, ctx) (_, e) -> let (e_type_flow, e_ctx) = check_expr ctx e in (List.concat [t_flow;e_type_flow], e_ctx)) ([], e_ctx) ls      
+                                                   
 
   | Expr.Ignore e -> let (_, ctx) = check_expr ctx e in ([Any], ctx)
 

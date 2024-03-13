@@ -21,7 +21,8 @@ extern size_t __gc_stack_top, __gc_stack_bottom;
   assert(__builtin_frame_address(0) <= (void *)__gc_stack_top);                                    \
   if (flag) { __gc_stack_top = 0; }
 
-static void vfailure (char *s, va_list args) {
+
+/*static*/ void vfailure (char *s, va_list args) {
   fprintf(stderr, "*** FAILURE: ");
   vfprintf(stderr, s, args);   // vprintf (char *, va_list) <-> printf (char *, ...)
   exit(255);
@@ -57,7 +58,7 @@ void Lassert (void *f, char *s, ...) {
       failure("string value expected in %s\n", memo);                                              \
   while (0)
 
-extern void *Bsexp (int n, int n_type, ...);
+extern PACKED_VALUE_TYPE Bsexp (int n, OPND_TYPE_T n_type, ...);
 extern int   LtagHash (char *);
 
 void *global_sysargs;
@@ -202,25 +203,26 @@ int Ls__Infix_47 (void *p, void *q) {
 }
 
 // Functional synonym for built-in operator "%";
-int Ls__Infix_37 (void *p, void *q) {
+int Ls__Infix_37 (void *p, void *q) { //TODO:
   ASSERT_UNBOXED("captured %:1", p);
   ASSERT_UNBOXED("captured %:2", q);
 
   return BOX(UNBOX(p) % UNBOX(q));
 }
 
-extern int Llength (void *p, int p_type) { //TODO: FIX_TYPES
+extern PACKED_VALUE_TYPE Llength (void *p, OPND_TYPE_T p_type) {
+  Llength_type_check(p, p_type);
   ASSERT_BOXED(".length", p);
   //Since the array, sexp stores types next to values, the actual size is 2 times smaller
   //String doesnt store type next to values
   //TODO: rewrite to use p_type
   if (TAG(TO_DATA(p)->data_header) == STRING_TAG){
-    return BOX(LEN(TO_DATA(p)->data_header));
+    return pack_type(BOX(LEN(TO_DATA(p)->data_header)), INT_OPND_TYPE);
   }
   if (TAG(TO_DATA(p)->data_header) == SEXP_TAG){
-    return BOX(LEN(TO_DATA(p)->data_header));
+    return pack_type(BOX(LEN(TO_DATA(p)->data_header))/2, INT_OPND_TYPE);
   }
-  return BOX(LEN(TO_DATA(p)->data_header)/2);
+  return pack_type(BOX(LEN(TO_DATA(p)->data_header)/2), INT_OPND_TYPE);
 }
 
 static char *chars = "_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'";
@@ -512,7 +514,7 @@ extern int LregexpMatch (struct re_pattern_buffer *b, char *s, int pos) {
   return BOX(res);
 }
 
-extern long long Bstring (void *, OPND_TYPE_T); //TODO: FIX_TYPES
+extern PACKED_VALUE_TYPE Bstring (void *, OPND_TYPE_T); //TODO: FIX_TYPES
 
 void *Lclone (void *p) {
   data *obj;
@@ -684,7 +686,7 @@ extern int Lcompare (void *p, void *q) {
   }
 }
 
-extern PACKED_VALUE_TYPE Belem (void *p, void* p_type, int i, void* i_type) {
+extern PACKED_VALUE_TYPE Belem (void *p, OPND_TYPE_T p_type, int i, OPND_TYPE_T i_type) { //TODO: FIX_ TYPES
   data *a = (data *)BOX(NULL);
 
   if (UNBOXED(p)) { ASSERT_BOXED(".elem:1", p); }
@@ -693,11 +695,14 @@ extern PACKED_VALUE_TYPE Belem (void *p, void* p_type, int i, void* i_type) {
   a = TO_DATA(p);
   i = UNBOX(i);
 
-  switch (TAG(a->data_header)) {
-    case STRING_TAG: return pack_type((void *)BOX(a->contents[i]), INT_OPND_TYPE);
-    case SEXP_TAG: return pack_type((void *)((int *)a->contents)[i + 1], SEXP_OPND_TYPE);
-    //case SEXP_TAG: return (void *)((int *)a->contents)[(2*i + 1) + 1];//[{type1, el1}, {type2, el2}, {type3, el3}, {type4, el4}..]
-    default: return pack_type((void *)((int *)a->contents)[2*i + 1], (void *)((int *)a->contents)[2*i]);         //[{type1, el1}, {type2, el2}, {type3, el3}, {type4, el4}..]
+  if(TAG(a->data_header) == STRING_TAG){
+    return pack_type((void *)BOX(a->contents[i]), INT_OPND_TYPE);
+  }
+  else if(TAG(a->data_header) == SEXP_TAG){
+    return pack_type((void *)((int *)a->contents)[2*(i+1) + 1], (void *)((int *)a->contents)[2*(i+1)]);
+  }
+  else{
+    return pack_type((void *)((int *)a->contents)[2*i + 1], (void *)((int *)a->contents)[2*i]);      
   }
 }
 
@@ -735,7 +740,7 @@ extern void *LmakeString (int length) {
   return r->contents;
 }
 
-extern long long Bstring (void *p, OPND_TYPE_T p_type) { //TODO: FIX_TYPES
+extern PACKED_VALUE_TYPE Bstring (void *p, OPND_TYPE_T p_type) { //TODO: FIX_TYPES
   int   n = strlen(p);
   void *s = NULL;
 
@@ -825,7 +830,7 @@ extern void *Bclosure (int bn, void *entry, ...) {
   return r->contents;
 }
 
-extern void *Barray (int bn, void* bn_type, ...) { //TODO: FIX_TYPES
+extern PACKED_VALUE_TYPE Barray (int bn, OPND_TYPE_T bn_type, ...) {
   va_list args;
   int     i, ai, ai_type;
   data   *r;
@@ -854,7 +859,7 @@ extern void *Barray (int bn, void* bn_type, ...) { //TODO: FIX_TYPES
 extern memory_chunk heap;
 #endif
 
-extern void *Bsexp (int bn, int bn_type, ...) { //TODO: FIX TYPES
+extern PACKED_VALUE_TYPE Bsexp (int bn, OPND_TYPE_T bn_type, ...) { //TODO: FIX TYPES
   va_list args;
   int     i;
   int     ai;
@@ -866,44 +871,49 @@ extern void *Bsexp (int bn, int bn_type, ...) { //TODO: FIX TYPES
   PRE_GC();
 
   int fields_cnt   = n - 1;
-  r                = (data *)alloc_sexp(fields_cnt); // 2x because of types
+  r                = (data *)alloc_sexp(2*fields_cnt+1); // 2x because of types + 1 for offset from tag
   ((sexp *)r)->tag = 0;
 
-  va_start(args, bn);
+  va_start(args, bn_type);
 
   for (i = 1; i < n; i++) {
     ai                      = va_arg(args, int);
     ai_type                 = va_arg(args, int);
     p                       = (size_t *)ai;
-    //((int *)r->contents)[2*i+1] = ai;
-    ((int *)r->contents)[i] = ai;
-    //((int *)r->contents)[2*i] = ai_type;
+    ((int *)r->contents)[2*i+1] = ai;
+    //((int *)r->contents)[i] = ai;
+    ((int *)r->contents)[2*i] = ai_type;
   }
-
-  ((sexp *)r)->tag = UNBOX(va_arg(args, int));
+  
+  int tag = UNBOX(va_arg(args, int));
+  ((sexp *)r)->tag = tag;
 
   va_end(args);
 
   POST_GC();
-  return (int *)r->contents;
+  return pack_type(((int *)r->contents), SEXP_OPND_TYPE);
 }
 
-extern int Btag (void *d, int d_type, int t, int t_type, int n, int n_type) { //TODO: FIX TYPES
+extern PACKED_VALUE_TYPE Btag (void *d, OPND_TYPE_T d_type, int t, OPND_TYPE_T t_type, int n, OPND_TYPE_T n_type) { //TODO: FIX TYPES
   data *r;
 
-  if (UNBOXED(d)) return BOX(0);
+  int ret;
+  if (UNBOXED(d)) ret = BOX(0);
   else {
     r = TO_DATA(d);
-    return BOX(TAG(r->data_header) == SEXP_TAG && TO_SEXP(d)->tag == UNBOX(t)
-               && LEN(r->data_header) == UNBOX(n));
+    int tg = TAG(r->data_header);
+    int stag = TO_SEXP(d)->tag;
+    ret = BOX(TAG(r->data_header) == SEXP_TAG && TO_SEXP(d)->tag == UNBOX(t)
+               && LEN(r->data_header)/2 == UNBOX(n));
   }
+  return pack_type(ret, INT_OPND_TYPE);
 }
 
 int get_tag (data *d) { return TAG(d->data_header); }
 
 int get_len (data *d) { return LEN(d->data_header); }
 
-extern int Barray_patt (void *d, int d_type, int n, int n_type) { //TODO: FIX_TYPES
+extern int Barray_patt (void *d, OPND_TYPE_T d_type, int n, OPND_TYPE_T n_type) { //TODO: FIX_TYPES
   data *r;
 
   if (UNBOXED(d)) return BOX(0);
@@ -912,23 +922,23 @@ extern int Barray_patt (void *d, int d_type, int n, int n_type) { //TODO: FIX_TY
     int rt = get_tag(r);
     int rt2  = ARRAY_TAG;
     int rlen = get_len(r);
-    return BOX(get_tag(r) == ARRAY_TAG && get_len(r)/2 == UNBOX(n)); //len/=2 because size = 2*elem, because {type, elem}*
+    return pack_type(BOX(get_tag(r) == ARRAY_TAG && get_len(r)/2 == UNBOX(n)), INT_OPND_TYPE); //len/=2 because size = 2*elem, because {type, elem}*
   }
 }
 
-extern int Bstring_patt (void *x, int x_type, void *y, int y_type) { //TODO: FIX_TYPES
+extern PACKED_VALUE_TYPE Bstring_patt (void *x, OPND_TYPE_T x_type, void *y, OPND_TYPE_T y_type) { //TODO: FIX_TYPES
   data *rx = (data *)BOX(NULL), *ry = (data *)BOX(NULL);
 
   ASSERT_STRING(".string_patt:2", y);
 
-  if (UNBOXED(x)) return BOX(0);
+  if (UNBOXED(x)) return pack_type(BOX(0), INT_OPND_TYPE);
   else {
     rx = TO_DATA(x);
     ry = TO_DATA(y);
 
-    if (TAG(rx->data_header) != STRING_TAG) return BOX(0);
+    if (TAG(rx->data_header) != STRING_TAG) return pack_type(BOX(0), INT_OPND_TYPE);
 
-    return BOX(strcmp(rx->contents, ry->contents) == 0 ? 1 : 0);
+    return pack_type(BOX(strcmp(rx->contents, ry->contents) == 0 ? 1 : 0), INT_OPND_TYPE);
   }
 }
 
@@ -938,9 +948,9 @@ extern int Bclosure_tag_patt (void *x, int x_type) {//TODO: FIX_TYPES
   return BOX(TAG(TO_DATA(x)->data_header) == CLOSURE_TAG);
 }
 
-extern int Bboxed_patt (void *x, int x_type) { return BOX(UNBOXED(x) ? 0 : 1); } //TODO: FIX_TYPES
+extern PACKED_VALUE_TYPE Bboxed_patt (void *x, int x_type) { return pack_type(BOX(UNBOXED(x) ? 0 : 1), INT_OPND_TYPE); }
 
-extern int Bunboxed_patt (void *x, int x_type) { return BOX(UNBOXED(x) ? 1 : 0); } //TODO: FIX_TYPES
+extern PACKED_VALUE_TYPE Bunboxed_patt (void *x, int x_type) { return pack_type(BOX(UNBOXED(x) ? 1 : 0), INT_OPND_TYPE); }
 
 extern int Barray_tag_patt (void *x, int x_type) { //TODO: FIX_TYPES
   if (UNBOXED(x)) return BOX(0);
@@ -960,12 +970,11 @@ extern int Bsexp_tag_patt (void *x, int x_type) { //TODO: FIX_TYPES
   return BOX(TAG(TO_DATA(x)->data_header) == SEXP_TAG);
 }
 
-extern void *Bsta (void *x, OPND_TYPE_T x_type, int i, OPND_TYPE_T i_type, void *v, OPND_TYPE_T v_type) { //TODO: FIX TYPES
+extern PACKED_VALUE_TYPE Bsta (void *x, OPND_TYPE_T x_type, int i, OPND_TYPE_T i_type, void *v, OPND_TYPE_T v_type) {
   Bsta_type_check(x, x_type, i, i_type, v, v_type);
   if (UNBOXED(i)) {
     ASSERT_BOXED(".sta:3", x);
     data *d = TO_DATA(x);
-
     switch (TAG(d->data_header)) {
       case STRING_TAG: {
         ((char *)x)[UNBOX(i)] = (char)UNBOX(v);
@@ -976,6 +985,7 @@ extern void *Bsta (void *x, OPND_TYPE_T x_type, int i, OPND_TYPE_T i_type, void 
         break;
       }
       default: {
+        ((int *)x)[2*(UNBOX(i))]   = v_type;
         ((int *)x)[2*(UNBOX(i))+1] = (int)v; //[{t1, e1}, {t2, e2}...]
       }
     }
@@ -983,7 +993,7 @@ extern void *Bsta (void *x, OPND_TYPE_T x_type, int i, OPND_TYPE_T i_type, void 
     *(void **)x = v;
   }
 
-  return v;
+  return pack_type(v, v_type);
 }
 
 static void fix_unboxed (char *s, va_list va) {
@@ -1049,7 +1059,7 @@ extern void * /*Lstrcat*/ Li__Infix_4343 (void *a, void *b) {
   return d->contents;
 }
 
-extern void *Lsprintf (char *fmt, ...) {
+extern void *Lsprintf (char *fmt, ...) { //TODO: FIX TYPES
   va_list args;
   void   *s;
 
@@ -1202,13 +1212,13 @@ extern void *Lfexists (char *fname) {
   return (void *)BOX(0);
 }
 
-extern PACKED_VALUE_TYPE *Lfst (void *v) { return Belem(v, UNDEFINED_OPND_TYPE,  BOX(0), INT_OPND_TYPE); } //TODO: FIX TYPES
+extern PACKED_VALUE_TYPE *Lfst (void *v, OPND_TYPE_T v_type) { return Belem(v, v_type,  BOX(0), INT_OPND_TYPE); }
 
-extern PACKED_VALUE_TYPE *Lsnd (void *v) { return Belem(v, UNDEFINED_OPND_TYPE, BOX(1), INT_OPND_TYPE); }  //TODO: FIX TYPES
+extern PACKED_VALUE_TYPE *Lsnd (void *v, OPND_TYPE_T v_type) { return Belem(v, v_type, BOX(1), INT_OPND_TYPE); }
 
-extern PACKED_VALUE_TYPE *Lhd (void *v) { return Belem(v, UNDEFINED_OPND_TYPE, BOX(0), INT_OPND_TYPE); }  //TODO: FIX TYPES
+extern PACKED_VALUE_TYPE *Lhd (void *v, OPND_TYPE_T v_type) { return Belem(v, v_type, BOX(0), INT_OPND_TYPE); }
 
-extern PACKED_VALUE_TYPE *Ltl (void *v) { return Belem(v, UNDEFINED_OPND_TYPE, BOX(1), INT_OPND_TYPE); }  //TODO: FIX TYPES
+extern PACKED_VALUE_TYPE *Ltl (void *v, OPND_TYPE_T v_type) { return Belem(v, v_type, BOX(1), INT_OPND_TYPE); }
 
 /* Lread is an implementation of the "read" construct */
 extern int Lread () {
@@ -1232,10 +1242,10 @@ extern int Lbinoperror2 (void) {
 }
 
 /* Lwrite is an implementation of the "write" construct */
-extern int Lwrite (int n, int n_type) {
+PACKED_VALUE_TYPE Lwrite (int n, int n_type) {
   printf("%d\n", UNBOX(n));
   fflush(stdout);
-  return 0;
+  return pack_type(0, INT_OPND_TYPE);
 }
 
 extern int Lrandom (int n) {
@@ -1275,4 +1285,13 @@ extern void set_args (int argc, char *argv[]) {
   global_stderr = stderr;
 
   push_extra_root((void **)&global_sysargs);
+}
+
+PACKED_VALUE_TYPE default_return_memory_loc(){
+  static void *memory = NULL;
+
+  if (memory == NULL) {
+      memory = malloc(sizeof(int)*2);
+  }    
+  return memory;
 }
