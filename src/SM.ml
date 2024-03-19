@@ -1432,7 +1432,7 @@ let compile cmd ((imports, _), p) =
         let env, line = env#gen_line x in
         let env, acc = env#lookup x in
         (env, false, line @ [ LDA acc ])
-    | Expr.Const n -> (env, false, [ CONST n ])
+    | Expr.Const (n, _) -> (env, false, [ CONST n ])
     | Expr.String s -> (env, false, [ STRING s ])
     | Expr.Binop (op, x, y) ->
         let lop, env = env#get_label in

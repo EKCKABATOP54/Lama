@@ -367,7 +367,7 @@ module Expr =
        notation, it came from GT.
     *)
     @type t =
-    (* integer constant           *) | Const     of int
+    (* integer constant           *) | Const     of int * Loc.t
     (* array                      *) | Array     of t list
     (* string                     *) | String    of string
     (* S-expressions              *) | Sexp      of string * t list
@@ -487,7 +487,7 @@ module Expr =
          eval conf' k s
       | Intrinsic f ->
          eval (f conf) Skip k
-      | Const n ->
+      | Const (n, _) ->
          eval (st, i, o, (Value.of_int n) :: vs) Skip k
       | String s ->
          eval (st, i, o, (Value.of_string @@ Bytes.of_string s) :: vs) Skip k
@@ -591,9 +591,9 @@ module Expr =
   let ignore atr expr = match atr with Void -> Ignore expr | _ -> expr
 
   (* places dummy value if required *)
-  let materialize atr expr =
+  let materialize atr l expr =
     match atr with
-    | Weak -> Seq (expr, Const 0)
+    | Weak -> Seq (expr, Const (0, l#coord))
     | _    -> expr
 
   (* semantics for infixes created in runtime *)
@@ -656,10 +656,10 @@ module Expr =
       let [@ocaml.warning "-20"] def s   = let [@ocaml.warning "-8"] Some def = Obj.magic !defCell in def s in
       let ostap (
       parse[infix][atr]: h:basic[infix][Void] -";" t:parse[infix][atr] {Seq (h, t)} | basic[infix][atr];
-      scope[infix][atr]: <(d, infix')> : def[infix] expr:parse[infix'][atr] {Scope (d, expr)} | {isVoid atr} => <(d, infix')> : def[infix] => {d <> []} => {Scope (d, materialize atr Skip)};
+      scope[infix][atr]: <(d, infix')> : def[infix] expr: parse[infix'][atr] {Scope (d, expr)} | {isVoid atr} => l:$ <(d, infix')> : def[infix] => {d <> []} => {Scope (d, materialize atr l Skip)};
       basic[infix][atr]: !(expr (fun x -> x) (Array.map (fun (a, (atr, l)) -> a, (atr, List.map (fun (s, _, f) -> ostap (- $(s)), f) l)) infix) (primary infix) atr);
       primary[infix][atr]:
-          s:(s:"-"? {match s with None -> fun x -> x | _ -> fun x -> Binop ("-", Const 0, x)})
+          l:$ s:(s:"-"? {match s with None -> fun x -> x | _ -> fun x -> Binop ("-", Const (0, l#coord), x)})
           b:base[infix][Val] is:(  "." f:LIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? {`Post (f, args)}
                                       | "[" i:parse[infix][Val] "]"                             {`Elem i}
                                       | "(" args:!(Util.list0)[parse infix Val] ")"             {`Call args}
@@ -701,11 +701,11 @@ module Expr =
         }
       | base[infix][atr];
       base[infix][atr]:
-        l:$ n:DECIMAL                              => {notRef atr} :: (not_a_reference l) => {ignore atr (Const n)}
+        l:$ n:DECIMAL                              => {notRef atr} :: (not_a_reference l) => {ignore atr (Const (n, l#coord))}
       | l:$ s:STRING                               => {notRef atr} :: (not_a_reference l) => {ignore atr (String s)}
-      | l:$ c:CHAR                                 => {notRef atr} :: (not_a_reference l) => {ignore atr (Const  (Char.code c))}
+      | l:$ c:CHAR                                 => {notRef atr} :: (not_a_reference l) => {ignore atr (Const  (Char.code c,l#coord))}
 
-      | l:$ c:(%"true" {Const 1} | %"false" {Const 0}) => {notRef atr} :: (not_a_reference l) => {ignore atr c}
+      | l:$ c:(%"true" {(Const (1, l#coord))} | %"false" {Const (0, l#coord)}) => {notRef atr} :: (not_a_reference l) => {ignore atr c}
 
       | l:$ %"infix" s:INFIX => {notRef atr} :: (not_a_reference l) => {
           if ((* UGLY! *) Obj.magic !predefined_op) infix s
@@ -739,8 +739,8 @@ module Expr =
 
       | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (Array es)}
       | l:$ "{" es:!(Util.list0)[parse infix Val] "}" => {notRef atr} :: (not_a_reference l) => {ignore atr (match es with
-                                                                                      | [] -> Const 0
-                                                                                      | _  -> List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const 0))
+                                                                                      | [] -> Const (0, l#coord)
+                                                                                      | _  -> List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const (0, l#coord)))
                                                                          }
       | l:$ t:UIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? => {notRef atr} :: (not_a_reference l) => {ignore atr (Sexp (t, match args with
                                                                                                               | None -> []
@@ -748,26 +748,26 @@ module Expr =
                                                                                         }
       | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (Var x) else Ref x}
 
-      | {isVoid atr} => %"skip" {materialize atr Skip}
+      | {isVoid atr} => l:$ %"skip" {materialize atr l Skip}
 
       | %"if" e:parse[infix][Val] %"then" the:scope[infix][atr]
         elif:(%"elif" parse[infix][Val] %"then" scope[infix][atr])*
         els:("else" s:scope[infix][atr] {Some s} | {isVoid atr} => empty {None}) %"fi"
-          {If (e, the, List.fold_right (fun (e, t) elif -> If (e, t, elif)) elif (match els with Some e -> e | _ -> materialize atr Skip))}
-      | %"while" e:parse[infix][Val] %"do" s:scope[infix][Void]
-                                            => {isVoid atr} => %"od" {materialize atr (While (e, s))}
+          l:$ {If (e, the, List.fold_right (fun (e, t) elif -> If (e, t, elif)) elif (match els with Some e -> e | _ -> materialize atr l Skip))}
+      | l:$ %"while" e:parse[infix][Val] %"do" s:scope[infix][Void]
+                                            => {isVoid atr} => %"od" {materialize atr l (While (e, s))}
 
-      | %"for" i:scope[infix][Void] ","
+      | l:$ %"for" i:scope[infix][Void] ","
                c:parse[infix][Val]             ","
                s:parse[infix][Void] %"do" b:scope[infix][Void] => {isVoid atr} => %"od"
-               {materialize atr
+               {materialize atr l
                   (match i with
                   | Scope (defs, i) -> Scope (defs, Seq (i, While (c, Seq (b, s))))
                   | _               -> Seq (i, While (c, Seq (b, s))))
                }
 
-      | %"do" s:scope[infix][Void] %"while" e:parse[infix][Val] => {isVoid atr} =>  %"od" {
-          materialize atr @@
+      | l:$ %"do" s:scope[infix][Void] %"while" e:parse[infix][Val] => {isVoid atr} =>  %"od" {
+          materialize atr l @@
             match s with
             | Scope (defs, s) ->
                let defs, s =
@@ -852,13 +852,13 @@ module Expr =
     (* Workaround until Ostap starts to memoize properly *)
     ostap (
       constexpr:
-        n:DECIMAL                                          {Const n}
+        l:$ n:DECIMAL                                          {Const (n, l#coord)}
       | s:STRING                                           {String s}
-      | c:CHAR                                             {Const (Char.code c)}
-      | %"true"                                            {Const 1}
-      | %"false"                                           {Const 0}
+      | l:$ c:CHAR                                             {Const (Char.code c, l#coord)}
+      | l:$ %"true"                                            {Const (1, l#coord)}
+      | l:$ %"false"                                           {Const (0, l#coord)}
       | "[" es:!(Util.list0)[constexpr] "]"                {Array es}
-      | "{" es:!(Util.list0)[constexpr] "}"                {match es with [] -> Const 0 | _  -> List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const 0)}
+      | l:$ "{" es:!(Util.list0)[constexpr] "}"                {match es with [] -> Const (0, l#coord) | _  -> List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const (0, l#coord))}
       | t:UIDENT args:(-"(" !(Util.list)[constexpr] -")")? {Sexp (t, match args with None -> [] | Some args -> args)}
       | l:$ x:LIDENT                                       {Loc.attach x l#coord; Var x}
       | -"(" constexpr -")"
@@ -1205,7 +1205,7 @@ ostap (
 };
 
 (* Workaround until Ostap starts to memoize properly *)
-    constparse[cmd]: <(is, infix)> : imports[cmd] d:!(Definition.constdef) {(is, []), Expr.Scope (d, Expr.materialize Expr.Weak Expr.Skip)}
+    constparse[cmd]: l:$ <(is, infix)> : imports[cmd] d:!(Definition.constdef) {(is, []), Expr.Scope (d, Expr.materialize Expr.Weak l Expr.Skip)}
 (* end of the workaround *)
 )
 
@@ -1250,8 +1250,8 @@ let parse cmd =
       parse[cmd]:
         <(is, infix)> : imports[cmd]
         <(d, infix')> : definitions[infix]
-        expr:expr[infix'][Expr.Weak]? {
-            (env#get_imports @ is, Infix.extract_exports infix'), Expr.Scope (d, match expr with None -> Expr.materialize Expr.Weak Expr.Skip | Some e -> e)
+        l:$ expr:expr[infix'][Expr.Weak]? {
+            (env#get_imports @ is, Infix.extract_exports infix'), Expr.Scope (d, match expr with None -> Expr.materialize Expr.Weak l Expr.Skip | Some e -> e)
           }
         )
   in
