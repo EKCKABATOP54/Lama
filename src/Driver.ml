@@ -2,12 +2,19 @@ open TypeChecker
 
 exception Commandline_error of string
 
-let default_ctx = TypeContext.update_ctx TypeContext.empty_ctx  [
+
+
+let default_ctx' = TypeContext.update_ctx TypeContext.empty_ctx  [
     ("write", Callable([Int], Int))
-  ; ("read", Callable([Int], Int)) 
+  ; ("read", Callable([], Int)) 
   ; ("length", Callable([Any], Int))
   ]
 
+let default_ctx = List.fold_left (fun ctx (var, tp) -> TypeContext.add_type_to_type_flow ctx var tp) default_ctx' [
+    ("write", Callable([Int], Int))
+  ; ("read", Callable([], Int)) 
+  ; ("length", Callable([Any], Int))
+  ]
 
 class options args =
   let n = Array.length args in
@@ -203,7 +210,7 @@ let[@ocaml.warning "-32"] main =
     with
     | `Ok prog -> (
         let (_, p) = prog in
-        let (type_flow, type_ctx) = TypeChecker.check_expr default_ctx p in ();
+        let (_, _) = TypeChecker.check_expr default_ctx p in ();
         cmd#dump_AST (snd prog);
         cmd#dump_source (snd prog);
         match cmd#get_mode with
