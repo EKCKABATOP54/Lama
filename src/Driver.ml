@@ -11,9 +11,9 @@ let default_ctx' = TypeContext.update_ctx TypeContext.empty_ctx  [
   ]
 
 let default_ctx = List.fold_left (fun ctx (var, tp) -> TypeContext.add_type_to_type_flow ctx var tp) default_ctx' [
-    ("write", Callable([Int], Int))
-  ; ("read", Callable([], Int)) 
-  ; ("length", Callable([Any], Int))
+    ("write", ( Callable([Int], Int), None))
+  ; ("read", ( Callable([], Int), None)) 
+  ; ("length", ( Callable([Any], Int), None) )
   ]
 
 class options args =
@@ -210,7 +210,9 @@ let[@ocaml.warning "-32"] main =
     with
     | `Ok prog -> (
         let (_, p) = prog in
+
         let (_, _) = TypeChecker.check_expr default_ctx p in ();
+        
         cmd#dump_AST (snd prog);
         cmd#dump_source (snd prog);
         match cmd#get_mode with
