@@ -287,7 +287,7 @@ let rec check_expr_type_flow (ctx : TypeContext.t ) (e : Expr.t ) : (TypeContext
   | Expr.Array ls      -> if List.length ls = 0 then ([Array Any], ctx) else List.fold_left (fun (t, ctx) e -> let (e_t, ctx) = check_expr_type_flow ctx e in (fix_union (Union [e_t; t]), ctx)) (Union [], ctx) ls
   *)
   | Expr.String _      -> ([(String, None)], ctx)
-  | Expr.Sexp (_, ls)  -> ([(Sexp, None)], List.fold_left (fun ctx e -> let (_, inner_ctx) = check_expr_type_flow ctx e in TypeContext.update_outer_context ctx inner_ctx []) ctx ls)
+  | Expr.Sexp (_, ls)  -> ([(Sexp, None)], List.fold_left (fun ctx e -> let (_, inner_ctx) = check_expr_type_flow ctx e in inner_ctx) ctx ls)
   | Expr.Var v         -> (TypeContext.get_var_type_flow ctx v, ctx)
   | Expr.Ref v         -> (TypeContext.get_var_type_flow ctx v, ctx) (*raise (Failure "Error. Never typecheck ref without assign") *) (*TypeContext.get_var_type_flow ctx v, ctx*)
   | Expr.Binop (_, e1, e2) ->  let (e1_type, e1_ctx) = check_expr_type_flow ctx e1 in
