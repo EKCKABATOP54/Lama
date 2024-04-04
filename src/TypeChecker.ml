@@ -122,10 +122,15 @@ let rec is_consistent_patt patt t = match patt with
 module TypeContext : sig
   type type_flow_t = (lamaType * Loc.t option) list
   type t = ((string * (lamaType * type_flow_t)) list) (* variable * (type annotation * (lamaType * typeLoc) list) *)
+  (*
   val add_type_to_type_flow : t -> string -> (lamaType * Loc.t option) -> t
   val add_types_to_type_flow : t -> string -> type_flow_t -> t
+  *)
+  val set_type_flow_types : t -> string -> type_flow_t -> t
   val update_ctx : t -> (string * lamaType) list -> t
+  val merge_ctxs : t -> t  -> t
   val update_outer_context : t -> t -> string list -> t
+  val empty_type_flow : type_flow_t
   val empty_ctx : t
   val get_var_type_flow : t -> string -> type_flow_t
   val get_var_type : t -> string -> lamaType
@@ -133,8 +138,17 @@ module TypeContext : sig
 end = struct
   type type_flow_t = (lamaType * Loc.t option) list
   type t = ((string * (lamaType * type_flow_t)) list)
-  let empty_type_flow_context = []
+  let empty_type_flow = []
   let empty_ctx = []
+  let rec set_type_flow_types ctx var ts = match ctx with 
+                                                  [] -> raise (Failure (Printf.sprintf "Undefined variable %s" var))
+                                                  | (v, (va, tf))::ctx -> if var = v then (
+                                                                                          v, 
+                                                                                          (va, ts)
+                                                                                          )::ctx
+                                                                          else (v, (va, tf))::(set_type_flow_types ctx var ts)
+  (*Sets ts from inner ctx in outer ctx, excepl local variables of inner ctx*)
+  let rec update_outer_context outer_ctx inner_ctx inner_locals = List.fold_left (fun o (var, (_, type_flow)) -> if List.mem var inner_locals then o else set_type_flow_types o var type_flow) outer_ctx inner_ctx
   (*TODO: check that type is compatible with annotation*)
   let rec add_type_to_type_flow ctx var (new_type, new_type_loc) = match ctx with
                                                           [] -> raise (Failure (Printf.sprintf "Undefined variable %s" var))
@@ -146,10 +160,10 @@ end = struct
   let rec add_types_to_type_flow ctx var ts = List.fold_left (fun ctx t -> add_type_to_type_flow ctx var t) ctx ts
   
                                                         (*Updates context with variable names and type annotations. If variable exist in old context, annotation and type flow discarded and replaced with new annotation and empty type flow*)
-  let update_ctx ctx vars = List.fold_left (fun ctx' (var, anType) -> (var, (anType, empty_type_flow_context))::ctx') (List.filter (fun (vname, _) -> not (List.mem vname (List.map fst vars))) ctx) vars
+  let update_ctx ctx vars = List.fold_left (fun ctx' (var, anType) -> (var, (anType, empty_type_flow))::ctx') (List.filter (fun (vname, _) -> not (List.mem vname (List.map fst vars))) ctx) vars
 
-  (*Updates outer ctx with information from inner cxt, excepl local variables of inner ctx*)
-  let update_outer_context outer_ctx inner_ctx inner_locals = List.fold_left (fun o (var, (_, type_flow)) -> if List.mem var inner_locals then o else add_types_to_type_flow o var type_flow) outer_ctx inner_ctx
+  (*Merges type flows of contexts*)
+  let merge_ctxs ctx1 ctx2 = List.fold_left (fun o (var, (_, type_flow)) -> add_types_to_type_flow o var type_flow) ctx1 ctx2
 
   let rec get_var_type_flow ctx var = match ctx with 
                                             [] -> raise (Failure (Printf.sprintf "Undefined variable %s" var))
@@ -275,7 +289,7 @@ let rec check_annotations (ctx : TypeContext.t ) (e : Expr.t ) : lamaType =
 let rec check_expr_type_flow (ctx : TypeContext.t ) (e : Expr.t ) : (TypeContext.type_flow_t * TypeContext.t) =
   let rec check_cycle cycle_ctx cycle = (
     let (_, new_ctx) = check_expr_type_flow cycle_ctx cycle
-    in  let changed = (cycle_ctx <> TypeContext.update_outer_context cycle_ctx ctx []) (*or even cycle_ctx <> new_ctx*)
+    in  let changed = (cycle_ctx <> TypeContext.merge_ctxs cycle_ctx ctx) (*or even cycle_ctx <> new_ctx*)
         in if changed then check_cycle new_ctx cycle else new_ctx
   )
   in
@@ -343,7 +357,7 @@ in (List.map (fun t -> (t, None)) possible_elem_types, index_ctx)
                           let (e_type, e_ctx) = check_expr_type_flow v_vtx e in
                           let refs = collect_refs v in
                           
-                          let ctx = List.fold_left (fun ctx' ref -> TypeContext.add_types_to_type_flow ctx' ref e_type) e_ctx refs in
+                          let ctx = List.fold_left (fun ctx' ref -> TypeContext.set_type_flow_types ctx' ref e_type) e_ctx refs in
                           (e_type, ctx)
                           
                                                       
@@ -355,7 +369,7 @@ in (List.map (fun t -> (t, None)) possible_elem_types, index_ctx)
   | Expr.If (e, thene, elsee) ->  let (_, e_inner_ctx) = check_expr_type_flow ctx e in
                                   let (then_type_flow, then_inner_ctx) = check_expr_type_flow e_inner_ctx thene in
                                   let (else_type_flow, else_inner_ctx) = check_expr_type_flow e_inner_ctx elsee in
-                                  let merge_then_else_ctx = TypeContext.update_outer_context then_type_flow else_inner_ctx [] in
+                                  let merge_then_else_ctx = TypeContext.merge_ctxs then_inner_ctx else_inner_ctx in
                                   (List.concat [then_type_flow; else_type_flow], merge_then_else_ctx)
 
   | Expr.While (cond, body)      -> ([], check_cycle ctx (Expr.Seq(cond, body)))
@@ -374,10 +388,10 @@ in (List.map (fun t -> (t, None)) possible_elem_types, index_ctx)
   | Expr.Scope (ds, e) ->   let inner_ctx = TypeContext.update_ctx ctx (List.map (fun (var, decl ) -> match decl with (_, `Fun (_,_, t)) -> (var, t) | (_, `Variable (_, t)) -> (var, t)) ds) in
                             let inner_ctx = List.fold_left (fun ctx (var, (_, vardecl)) -> 
                                                               match vardecl with
-                                                                    `Fun (_, _, t) -> TypeContext.add_type_to_type_flow ctx var (t, None)
+                                                                    `Fun (_, _, t) -> TypeContext.set_type_flow_types ctx var [(t, None)]
                                                                     | `Variable (Some e, _) -> let (type_flow, new_ctx) = check_expr_type_flow ctx e in 
-                                                                                            TypeContext.add_types_to_type_flow new_ctx var type_flow
-                                                                    | `Variable (None, _) -> ctx) inner_ctx ds   in
+                                                                                            TypeContext.set_type_flow_types new_ctx var type_flow
+                                                                    | `Variable (None, _) -> TypeContext.set_type_flow_types ctx var TypeContext.empty_type_flow) inner_ctx ds   in
                             let (tflow, inner_ctx) = check_expr_type_flow inner_ctx e in
                             (tflow, TypeContext.update_outer_context ctx inner_ctx (List.map (fun (var, _) -> var) ds))
   | _ -> raise (Failure "Not implemented1")

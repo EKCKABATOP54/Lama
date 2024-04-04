@@ -10,10 +10,10 @@ let default_ctx' = TypeContext.update_ctx TypeContext.empty_ctx  [
   ; ("length", Callable([Any], Int))
   ]
 
-let default_ctx = List.fold_left (fun ctx (var, tp) -> TypeContext.add_type_to_type_flow ctx var tp) default_ctx' [
-    ("write", ( Callable([Int], Int), None))
-  ; ("read", ( Callable([], Int), None)) 
-  ; ("length", ( Callable([Any], Int), None) )
+let default_ctx = List.fold_left (fun ctx (var, tp) -> TypeContext.set_type_flow_types ctx var tp) default_ctx' [
+    ("write", [( Callable([Int], Int), None)])
+  ; ("read", [( Callable([], Int), None)]) 
+  ; ("length", [( Callable([Any], Int), None)] )
   ]
 
 class options args =
