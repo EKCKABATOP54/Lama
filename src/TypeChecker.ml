@@ -355,7 +355,7 @@ in (List.map (fun t -> (t, None)) possible_elem_types, index_ctx)
   | Expr.If (e, thene, elsee) ->  let (_, e_inner_ctx) = check_expr_type_flow ctx e in
                                   let (then_type_flow, then_inner_ctx) = check_expr_type_flow e_inner_ctx thene in
                                   let (else_type_flow, else_inner_ctx) = check_expr_type_flow e_inner_ctx elsee in
-                                  let merge_then_else_ctx = TypeContext.update_outer_context (TypeContext.update_outer_context e_inner_ctx then_inner_ctx []) else_inner_ctx [] in
+                                  let merge_then_else_ctx = TypeContext.update_outer_context then_type_flow else_inner_ctx [] in
                                   (List.concat [then_type_flow; else_type_flow], merge_then_else_ctx)
 
   | Expr.While (cond, body)      -> ([], check_cycle ctx (Expr.Seq(cond, body)))
