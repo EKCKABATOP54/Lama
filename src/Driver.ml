@@ -211,7 +211,7 @@ let[@ocaml.warning "-32"] main =
     | `Ok prog -> (
         let (_, p) = prog in
 
-        let (_, _) = TypeChecker.check_expr default_ctx p in ();
+        TypeChecker.check_expr default_ctx p;
         
         cmd#dump_AST (snd prog);
         cmd#dump_source (snd prog);
