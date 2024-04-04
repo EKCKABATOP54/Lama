@@ -232,7 +232,7 @@ let rec check_annotations (ctx : TypeContext.t ) (e : Expr.t ) : lamaType =
   | Expr.If (e, thene, elsee) ->  ignore (check_annotations ctx e); 
                                   let then_type = check_annotations ctx thene in
                                   let else_type = check_annotations ctx elsee in
-                                  Union [then_type; else_type] (*Or check that then_t = else_t? Or guess what type is expected and compare with it*)
+                                  if then_type <> else_type then  Union [then_type; else_type] else then_type(*Or check that then_t = else_t? Or guess what type is expected and compare with it*)
   | Expr.While (cond, body) ->  let _ = check_annotations ctx cond 
                                 in let _ =  check_annotations ctx body
                                 in Unit
