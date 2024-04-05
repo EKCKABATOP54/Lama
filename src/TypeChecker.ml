@@ -154,7 +154,8 @@ end = struct
                                                           [] -> raise (Failure (Printf.sprintf "Undefined variable %s" var))
                                                         | (v, (va, tf)):: ctx -> if var = v then  (
                                                           v, 
-                                                          ( va, if List.mem (new_type, new_type_loc) tf then tf else (new_type, new_type_loc)::tf
+                                                          ( va, (if not (is_consistent new_type va) then raise (Failure (Printf.sprintf "Type %s of value is incompatible with variable \'%s\' type annotation %s" (type_to_string new_type) (var) (type_to_string va)));
+                                                                if List.mem (new_type, new_type_loc) tf then tf else (new_type, new_type_loc)::tf)
                                                           )
                                                         ) ::ctx else (v, (va, tf)):: add_type_to_type_flow ctx var (new_type, new_type_loc)
   let rec add_types_to_type_flow ctx var ts = List.fold_left (fun ctx t -> add_type_to_type_flow ctx var t) ctx ts
@@ -176,7 +177,7 @@ end = struct
   let to_string ctx = String.concat "\n" (List.map (fun (var, (vt, vtf)) -> Printf.sprintf "(%s, (%s, %s))" var (type_to_string vt) (String.concat "," (List.map (fun (t, l) -> Printf.sprintf "(%s, ?)" (type_to_string t)) vtf)) ) ctx)
 end
 
-let rec collect_refs e = match e with (*TODO: more precise analisys*)
+let rec collect_refs e = match e with (*TODO: more precise analysis*)
                                 Expr.Ref v -> [v]
                                 | Expr.Seq ( _ , s2) -> collect_refs s2
                                 | Expr.If (_, s1, s2) -> (collect_refs s1) @ (collect_refs s2)
@@ -187,7 +188,14 @@ let rec collect_refs e = match e with (*TODO: more precise analisys*)
 let rec check_annotations (ctx : TypeContext.t ) (e : Expr.t ) : lamaType =
   match e with 
   | Expr.Const (_, _) -> Int
-  | Expr.Array _ -> Array Any (*TODO ARRAY*)
+  | Expr.Array e_ls ->  if List.length e_ls = 0 then Array Any 
+                        else(
+                          let elem_t_list = List.fold_left 
+                                            (fun l e ->  let e_t = check_annotations ctx e 
+                                                                in if List.mem e_t l then l else e_t::l ) 
+                                            [] e_ls
+                          in if List.length elem_t_list = 1 then Array (List.hd elem_t_list) else Array (Union elem_t_list)
+                        )
   | Expr.String _ -> String
   | Expr.Sexp (_, ls) -> List.iter (fun e -> ignore (check_annotations ctx e)) ls; Sexp
   | Expr.Var v -> TypeContext.get_var_type ctx v
@@ -295,11 +303,9 @@ let rec check_expr_type_flow (ctx : TypeContext.t ) (e : Expr.t ) : (TypeContext
   in
   match e with
   | Expr.Const (_, l)       -> ([(Int, Some l)], ctx)
-  | Expr.Array ls      -> ([(Array Any, None)], ctx)
-  (*TODO ARRAY*)
-  (*
-  | Expr.Array ls      -> if List.length ls = 0 then ([Array Any], ctx) else List.fold_left (fun (t, ctx) e -> let (e_t, ctx) = check_expr_type_flow ctx e in (fix_union (Union [e_t; t]), ctx)) (Union [], ctx) ls
-  *)
+  | Expr.Array ls      -> if List.length ls = 0 then ([(Array Any, None)], ctx) else  let (e_ts, ctx) = List.fold_left (fun (t, ctx) e ->   let (e_t, ctx) = check_expr_type_flow ctx e 
+                                                                                                                                            in ( List.fold_left ( fun t e_t -> if List.mem e_t t then t else e_t::t ) t e_t, ctx)) ([], ctx) ls 
+                                                                                      in ((if List.length e_ts = 1 then [(Array (fst(List.hd e_ts)), None)] else [(Array (Union (List.map fst e_ts)), None)]), ctx)
   | Expr.String _      -> ([(String, None)], ctx)
   | Expr.Sexp (_, ls)  -> ([(Sexp, None)], List.fold_left (fun ctx e -> let (_, inner_ctx) = check_expr_type_flow ctx e in inner_ctx) ctx ls)
   | Expr.Var v         -> (TypeContext.get_var_type_flow ctx v, ctx)
