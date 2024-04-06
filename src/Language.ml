@@ -84,6 +84,7 @@ module Value =
     | Closure of string list * 'a * 'b
     | FunRef  of string * string list * 'a * int
     | Builtin of string
+    | Tuple of ('a, 'b) t array
     with show, html, foldl
 
     let is_int = function Int _ -> true | _ -> false
@@ -101,6 +102,7 @@ module Value =
     | _       -> failwith "array value expected"
 
     let sexp   s vs = Sexp (s, Array.of_list vs)
+    let tuple vs = Tuple (Array.of_list vs)
     let of_int    n = Int    n
     let of_string s = String s
     let of_array  a = Array  a
@@ -295,6 +297,7 @@ module Pattern =
     (* The type for patterns *)
     @type t =
     (* wildcard "-"     *) | Wildcard
+    (*Tuple*)              | Tuple of t list
     (* S-expression     *) | Sexp   of string * t list
     (* array            *) | Array  of t list
     (* identifier       *) | Named  of string * t
@@ -321,6 +324,7 @@ module Pattern =
 	 primary);
       primary:
         %"_"                                         {Wildcard}
+      | "<" ps:(!(Util.list0)[parse]) ">"            {Tuple ps}
       | t:UIDENT ps:(-"(" !(Util.list)[parse] -")")? {Sexp (t, match ps with None -> [] | Some ps -> ps)}
       | "[" ps:(!(Util.list0)[parse]) "]"            {Array ps}
       | "{" ps:(!(Util.list0)[parse]) "}"            {match ps with
@@ -348,7 +352,16 @@ module Pattern =
 
 
 
-@type lamaType = Sexp | Int | String | Array of lamaType | Any | Callable of (lamaType list) * lamaType | Unit | Union of lamaType list with show, html, foldl
+@type lamaType =  Sexp 
+                  | Int 
+                  | String 
+                  | Array of lamaType 
+                  | Any 
+                  | Callable of (lamaType list) * lamaType 
+                  | Unit 
+                  | Union of lamaType list 
+                  | Tuple of lamaType list 
+                  with show, html, foldl
 ostap(
   parseLamaType:
     parseLamaTypeSexp: "Sexp" {Sexp}
@@ -407,6 +420,7 @@ module Expr =
     (* leave a scope              *) | Leave
     (* intrinsic (for evaluation) *) | Intrinsic of (t config, t config) arrow
     (* control (for control flow) *) | Control   of (t config, t * t config) arrow
+    (* tuple *)                      | Tuple of t list
     and decl = qualifier * [`Fun of string list * t * lamaType| `Variable of t option * lamaType]
     with show, html, foldl
 
@@ -521,6 +535,8 @@ module Expr =
          eval conf k (schedule_list (xs @ [Intrinsic (fun (st, i, o, vs) -> let es, vs' = take (List.length xs) vs in Builtin.eval (st, i, o, vs') (List.rev es) ".array")]))
       | Sexp (t, xs) ->
          eval conf k (schedule_list (xs @ [Intrinsic (fun (st, i, o, vs) -> let es, vs' = take (List.length xs) vs in (st, i, o, Value.Sexp (t, Array.of_list (List.rev es)) :: vs'))]))
+      | Tuple xs -> 
+         eval conf k (schedule_list (xs @ [Intrinsic (fun (st, i, o, vs) -> let es, vs' = take (List.length xs) vs in (st, i, o, Value.Tuple (Array.of_list (List.rev es)) :: vs'))]))
       | Binop (op, x, y) ->
          eval conf k (schedule_list [x; y; Intrinsic (function (st, i, o, y::x::vs) -> (st, i, o, (Value.of_int @@ to_func op (Value.to_int x) (Value.to_int y)) :: vs) | _ -> failwith (Printf.sprintf "Unexpected pattern: %s: %d" __FILE__ __LINE__))])
       | Elem (b, i) ->
@@ -573,6 +589,7 @@ module Expr =
                   | Pattern.Named (x, p), v                                                                   -> update x v (match_patt p v st )
                   | Pattern.Wildcard    , _                                                                   -> st
                   | Pattern.Sexp (t, ps), Value.Sexp (t', vs) when t = t' && List.length ps = Array.length vs -> match_list ps (Array.to_list vs) st
+                  | Pattern.Tuple ps    , Value.Tuple vs when List.length ps = Array.length vs                -> match_list ps (Array.to_list vs) st
                   | Pattern.Array ps    , Value.Array vs when List.length ps = Array.length vs                -> match_list ps (Array.to_list vs) st
                   | Pattern.Const n     , Value.Int n'    when n = n'                                         -> st
                   | Pattern.String s    , Value.String s' when s = Bytes.to_string s'                         -> st
@@ -758,6 +775,8 @@ module Expr =
                                                                                       | [] -> Const (0, l#coord)
                                                                                       | _  -> List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const (0, l#coord)))
                                                                          }
+      | l:$ "<" tuple_elements:!(Util.list0)[parse infix Val] ">" => {notRef atr} :: (not_a_reference l) => {ignore atr (Tuple tuple_elements)
+                                                                                        }
       | l:$ t:UIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? => {notRef atr} :: (not_a_reference l) => {ignore atr (Sexp (t, match args with
                                                                                                               | None -> []
                                                                                                               | Some args -> args))

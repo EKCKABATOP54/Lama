@@ -10,28 +10,30 @@ let rec type_to_string t = match t with
                         | Callable (args, ret) -> Printf.sprintf "Callable ([%s], %s)" (String.concat "," (List.map type_to_string args)) (type_to_string ret)
                         | Unit  -> "Unit"
                         | Union ls -> Printf.sprintf "Union [%s]" (String.concat "," (List.map type_to_string ls))
+                        | Tuple ls -> Printf.sprintf "Tuple [%s]" (String.concat "," (List.map type_to_string ls))
 
+let rec remove_duplicates lst =
+                              match lst with
+                              | [] -> []
+                              | hd :: tl ->
+                                hd :: (remove_duplicates (List.filter (fun x -> x <> hd) tl))
 
 (*Returns Union in normal form*)   
-(*TODO: return Any if t is Union (Int, String, Array Any ...)*)                     
+(*TODO?: return Any if t is Union (Int, String, Array Any ...)*)                     
 let rec fix_union t =  let rec flattern_type t = match t with 
                                                               | Array et -> Array (flattern_type et)
                                                               | Callable (args, ret) -> Callable (List.map flattern_type args, flattern_type ret)
                                                               | Union ts -> let rec flatterned_types = List.map flattern_type (List.rev ts) in
                                                                             let fixed = List.fold_left (fun ls t -> match t with Union ts -> List.concat [ls;ts] | _ -> t::ls) [] flatterned_types
                                                                             in Union fixed
+                                                              | Tuple ts -> Tuple (List.map flattern_type ts)
                                                               | _ -> t
                                 in   
-                                let rec remove_duplicates lst =
-                                  match lst with
-                                  | [] -> []
-                                  | hd :: tl ->
-                                    hd :: (remove_duplicates (List.filter (fun x -> x <> hd) tl))
-                                in  let t = 
+                                let t = 
                                           match flattern_type t with 
                                           | Union ls -> Union (remove_duplicates ls)
                                           | t -> t
-                                    in match t with Union ls -> if List.length ls = 1 then List.hd ls else Union ls | _ -> t
+                                in match t with Union ls -> if List.length ls = 1 then List.hd ls else Union ls | _ -> t
 
 (*Removes loc info. If returns Union, then Union in normal form, i.e Union is flat and dont contains duplicates*)
 let type_from_type_flow tf = fix_union (Union (List.map fst tf))
@@ -68,13 +70,20 @@ let rec is_consistent_helper t1 t2 = (*Printf.printf "ABOBA\nt1:%s\nt2:%s\nt1 fi
   | Unit, Union ls -> List.fold_left (||) false (List.map (is_consistent Unit) ls)
   | Unit, _ -> false
 
+  | Tuple lts, Tuple rts -> if List.length lts <> List.length rts then false else 
+                            List.fold_left (&&) true (List.map (fun (t1,t2) -> is_consistent t1 t2) (List.combine lts rts))
+  | Tuple ts, Union ls -> List.fold_left (||) false (List.map (is_consistent (Tuple ts)) ls)
+  | Tuple ts, _ -> false
+
   | Union [],_ -> false (*true*) (*OR failure or false?*)
   | Union l, Union r-> List.fold_left (fun acc t -> acc && is_consistent t (Union r)) true l
   | Union ls, t -> false
 
+
 and is_consistent t1 t2 = is_consistent_helper (fix_union t1) (fix_union t2)  
 
 (*equal = describe the same sets of values*)
+(*TODO: possible bug. Should call are_types_equal instead of are_types_equal_helper*)
 let are_types_equal t1 t2 =   Printf.printf "Outer f\n"; flush stdout; 
                               let rec are_types_equal_helper t1' t2' =  (Printf.printf "Checking equality of\n %s \nAND\n %s\n" (type_to_string t1') (type_to_string t2'); flush stdout; match (t1', t2') with 
                                                                         | (Any, Any) -> true
@@ -97,13 +106,18 @@ let are_types_equal t1 t2 =   Printf.printf "Outer f\n"; flush stdout;
                                                                         | Callable (atls1, rt1), Union ls -> List.length ls <> 0 && List.fold_left (fun acc t -> acc && are_types_equal_helper t (Callable (atls1, rt1))) true ls
                                                                         | Callable _ , _ -> false
 
+                                                                        | Tuple lts, Tuple rts -> if List.length lts <> List.length rts then false else
+                                                                                                  List.fold_left (&&) true (List.map (fun (t1, t2) -> are_types_equal_helper t1 t2) (List.combine lts rts))
+                                                                        | Tuple ts, Union ls -> List.length ls <> 0 && List.fold_left (fun acc t -> acc && are_types_equal_helper t (Tuple ts)) true ls
+                                                                        | Tuple _, _ -> false
+
                                                                         | Union l, Union r -> if List.mem Any l || List.mem Any r then let (lFixed, rFixed) = ((if List.mem Any l then Any else Union l), if List.mem Any r then Any else Union r) in
                                                                                               are_types_equal_helper lFixed rFixed
                                                                                               else (List.fold_left (fun acc tl -> acc && List.fold_left (fun acc tr -> acc || are_types_equal_helper tl tr) false r) true l) && (List.fold_left (fun acc tr -> acc && List.fold_left (fun acc tl -> acc || are_types_equal_helper tr tl) false l) true r)
                                                                         | Union ls, t -> (*transform to case t, Un(List.fold_left (fun acc tr -> acc || List.fold_left (fun acc tl -> acc || are_types_equal_helper tl tr) acc l) false r)ion*) are_types_equal_helper t (Union ls)
                                                                         )
                               in are_types_equal_helper (fix_union t1) (fix_union t2)                                           
-
+(*
 let rec is_consistent_patt patt t = match patt with 
                                       Pattern.Wildcard -> true
                                       | Pattern.Sexp _ -> is_consistent Sexp t
@@ -118,7 +132,7 @@ let rec is_consistent_patt patt t = match patt with
                                       | Pattern.ArrayTag -> is_consistent (Array Any) t 
                                       | Pattern.ClosureTag -> raise (Failure "not implemented patt")
 
-
+*)
 module TypeContext : sig
   type type_flow_t = (lamaType * Loc.t option) list
   type t = ((string * (lamaType * type_flow_t)) list) (* variable * (type annotation * (lamaType * typeLoc) list) *)
@@ -183,7 +197,28 @@ let rec collect_refs e = match e with (*TODO: more precise analysis*)
                                 | Expr.If (_, s1, s2) -> (collect_refs s1) @ (collect_refs s2)
                                 | _ -> []
 
-
+let rec check_pattern_type ctx p =
+  match p with 
+  Pattern.Wildcard -> (Any, ctx)
+  | Pattern.Tuple ps -> let (pts, ctx) = List.fold_left (fun (pts, ctx) p -> let (pt, ctx) = check_pattern_type ctx p in (pt::pts, ctx)) ([], ctx) ps
+                        in (Tuple (List.rev pts), ctx)
+  | Pattern.Sexp (_, ps) -> let ctx  = List.fold_left (fun ctx p -> let (_, ctx) = check_pattern_type ctx p in ctx) ctx ps in (Sexp, ctx)
+  | Pattern.Array ps -> let (ptd, ctx) = List.fold_left (fun (ts, ctx) p -> let (pt, ctx) = check_pattern_type ctx p in ((if List.mem pt ts then ts else pt::ts), ctx)) ([], ctx) ps
+                in if List.length ptd = 0 then (Array Any, ctx) else
+                  (
+                    if List.length ptd = 1 then (Array (List.hd ptd), ctx)
+                    else (Array (Union ptd), ctx)
+                  )
+  | Pattern.Named (name, p) -> let (t, ctx) = check_pattern_type ctx p in (t, TypeContext.update_ctx ctx [(name, t)])
+  | Pattern.Const _ -> (Int, ctx)
+  | Pattern.String _ -> (String, ctx)
+  | Pattern.Boxed -> (Any, ctx) (*???*)
+  | Pattern.UnBoxed -> (Any, ctx) (*???*)
+  | Pattern.StringTag -> (String, ctx)
+  | Pattern.SexpTag -> (Sexp, ctx)
+  | Pattern.ArrayTag -> (Array Any, ctx)
+  | Pattern.ClosureTag -> (Any, ctx) (*TODO*)
+            
 (*only checks annotations. returns type of expresion*)
 let rec check_annotations (ctx : TypeContext.t ) (e : Expr.t ) : lamaType =
   match e with 
@@ -289,6 +324,15 @@ let rec check_annotations (ctx : TypeContext.t ) (e : Expr.t ) : lamaType =
                                                       [t] -> t
                                                       | _ -> Union return_ts
                                     )
+  | Expr.Tuple es -> Tuple (List.map (check_annotations ctx) es)
+  | Expr.Case (e, bs, _, _) ->  let e_t = check_annotations ctx e 
+                                in let pts = List.map (fun p -> let (pt, _ ) = check_pattern_type ctx p in pt) (List.map fst bs)
+                                in 
+                                if not (is_consistent e_t (Union pts)) then raise (Failure  (Printf.sprintf "Patterns is not exhaustive. Type of e: (%s) type, but patterns decribes (%s)" (type_to_string e_t) (type_to_string (Union pts))  ) );
+                                List.iter (fun (p, pt) -> if not (is_consistent pt e_t) then raise (Failure (Printf.sprintf "Scrutinee has type %s, but unnecessary pattern of type %s found" (type_to_string e_t) (type_to_string pt)))) (List.combine (List.map fst bs) pts ); 
+                                let res_t_ls = List.map ( fun (p, b) -> let (_, ctx) = check_pattern_type ctx p in check_annotations ctx b) bs
+                                in  let res_t_ls = remove_duplicates res_t_ls
+                                    in if List.length res_t_ls = 1 then List.hd res_t_ls else Union res_t_ls
   | _ -> raise (Failure "Not implemented2")     
 
 
@@ -381,7 +425,9 @@ in (List.map (fun t -> (t, None)) possible_elem_types, index_ctx)
   | Expr.While (cond, body)      -> ([], check_cycle ctx (Expr.Seq(cond, body)))
   
   | Expr.DoWhile (body, cond)    ->  ([], check_cycle ctx (Expr.Seq(body, cond)) ) (*Union [], check_cycle ctx (Expr.Seq(e, cond)) *)
-(*
+
+  | Expr.Case _ -> ([(Any, None)], ctx) (*TODO*)
+  (*
   | Expr.Case (e, ls, _, _) ->    let (e_type_flow, e_ctx) = check_expr_type_flow ctx e in
                                   List.iter (fun t -> if List.fold_left (fun acc patt_t -> is_consistent_patt patt_t t || acc) false (List.map (fun (p, _) -> p) ls ) then () else raise (Failure (Printf.sprintf "No pattern for type %s" (type_to_string t)))  ) e_type_flow;
                                   let (tf, ctx )  = List.fold_left (fun (t_flow, ctx) (_, e) -> let (e_type_flow, e_ctx) = check_expr_type_flow ctx e in (List.concat [t_flow;e_type_flow], e_ctx)) ([], e_ctx) ls      
@@ -400,9 +446,10 @@ in (List.map (fun t -> (t, None)) possible_elem_types, index_ctx)
                                                                     | `Variable (None, _) -> TypeContext.set_type_flow_types ctx var TypeContext.empty_type_flow) inner_ctx ds   in
                             let (tflow, inner_ctx) = check_expr_type_flow inner_ctx e in
                             (tflow, TypeContext.update_outer_context ctx inner_ctx (List.map (fun (var, _) -> var) ds))
-  | _ -> raise (Failure "Not implemented1")
-                                           
+  | Expr.Tuple ls ->  let (tls, ctx) = List.fold_left (fun (tls, ctx) e -> let (etls, ctx) = check_expr_type_flow ctx e in ((Union (List.map fst etls))::tls, ctx) ) ([], ctx) ls
+                      in ([(Tuple (List.map (fun (Union ts) -> Union (List.rev ts)) tls), None)], ctx)
 
+  | _ -> raise (Failure "Not implemented1")
 
 (* Should also work this:
 let check_expr ctx expr = let _ = check_expr_type_flow ctx expr in let _ = check_annotations ctx expr in (); 

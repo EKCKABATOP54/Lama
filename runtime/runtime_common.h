@@ -12,6 +12,8 @@
 #define CLOSURE_TAG 0x00000007
 #define UNBOXED_TAG 0x00000009   // Not actually a data_header; used to return from LkindOf
 
+#define TUPLE_SEXP_TAG 4321
+
 #define LEN(x) ((x & 0xFFFFFFF8) >> 3)
 #define TAG(x) (x & 0x00000007)
 
@@ -80,5 +82,6 @@ typedef struct {
 #define STR_OPND_TYPE (OPND_TYPE_T)333
 #define ARR_OPND_TYPE (OPND_TYPE_T)444
 #define SEXP_OPND_TYPE (OPND_TYPE_T)555
+#define TUPLE_OPND_TYPE (OPND_TYPE_T)666
 
 #endif

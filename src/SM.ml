@@ -26,6 +26,8 @@ type insn =
   | STRING of string
   (* create an S-expression                    *)
   | SEXP of string * int
+  (*create an Tuple*)
+  | TUPLE of int
   (* load a variable to the stack              *)
   | LD of Value.designation
   (* load a variable address to the stack      *)
@@ -77,6 +79,8 @@ type insn =
   | TAG of string * int
   (* checks the tag and size of array          *)
   | ARRAY of int
+  (* checks the tag and size of tuple          *)
+  | TUPLETAG of int
   (* checks various patterns                   *)
   | PATT of patt
   (* match failure (location, leave a value    *)
@@ -490,6 +494,11 @@ let[@ocaml.warning "-8-20"] rec eval env
           eval env
             (cstack, (Value.sexp s @@ List.rev vs) :: stack', glob, loc, i, o)
             prg'
+      | TUPLE n -> 
+          let vs, stack' = split n stack in
+          eval env
+            (cstack, (Value.tuple (List.rev vs)) :: stack', glob, loc, i, o)
+            prg'
       | ELEM ->
           let (a :: b :: stack') = stack in
           eval env
@@ -645,6 +654,19 @@ let[@ocaml.warning "-8-20"] rec eval env
               i,
               o )
             prg'
+      | TUPLETAG n ->
+          let (x :: stack') = stack in
+          eval env
+            ( cstack,
+              (Value.of_int
+              @@
+              match x with Value.Tuple a when Array.length a = n -> 1 | _ -> 0)
+              :: stack',
+              glob,
+              loc,
+              i,
+              o )
+            prg'          
       | PATT StrCmp ->
           let (x :: y :: stack') = stack in
           eval env
@@ -1295,6 +1317,22 @@ let compile cmd ((imports, _), p) =
         in
         let code, env = pattern_list lhead ldrop env ps in
         (env, true, tag @ code @ [ DROP ])
+    | Pattern.Tuple ps ->
+        let lhead, env = env#get_label in
+        let ldrop, env = env#get_label in
+        let tag =
+          [
+            DUP;
+            TUPLETAG (List.length ps);
+            CJMP ("nz", lhead);
+            LABEL ldrop;
+            DROP;
+            JMP lfalse;
+            LABEL lhead;
+          ]
+        in
+        let code, env = pattern_list lhead ldrop env ps in
+        (env, true, tag @ code @ [ DROP ])
     | Pattern.Sexp (t, ps) ->
         let lhead, env = env#get_label in
         let ldrop, env = env#get_label in
@@ -1334,6 +1372,10 @@ let compile cmd ((imports, _), p) =
 
             method c_Sexp path _ _ ps =
               List.concat @@ List.mapi (fun i p -> fself (path @ [ i ]) p) ps
+
+            (*TODO*)
+            (*I don't know what this part does*)
+            method c_Tuple _ _ _ = []
 
             method c_UnBoxed _ _ = []
             method c_StringTag _ _ = []
@@ -1475,6 +1517,12 @@ let compile cmd ((imports, _), p) =
           (compile_list false lsexp env xs)
           lsexp false
           [ SEXP (t, List.length xs) ]
+    | Expr.Tuple xs -> 
+      let lsexp, env = env#get_label in
+      add_code
+        (compile_list false lsexp env xs)
+        lsexp false
+        [ TUPLE (List.length xs) ]
     | Expr.Elem (a, i) ->
         let lelem, env = env#get_label in
         add_code

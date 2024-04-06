@@ -290,6 +290,7 @@ let compile cmd env imports code =
             | "Barray" -> List.rev @@ (Push (L (box n)) :: Push (L (type_tag IntOpnd)) :: pushs)
             | "Bsexp" -> List.rev @@ (Push (L (box n)) :: Push (L (type_tag IntOpnd)) :: pushs)
             | "Bsta" -> List.rev pushs
+            | "Btuple" -> List.rev @@ (Push (L (box n)) :: Push (L (type_tag IntOpnd)) :: pushs)
             | _ -> List.rev pushs
           in
           ( env,
@@ -696,6 +697,9 @@ let compile cmd env imports code =
                 let s, env = env#allocate in
                 let env, code = call env ".sexp" (n + 1) false in
                 (env, [ Mov (L (box (env#hash t)), s) ] @ code) (*TODO: move type*)
+            | TUPLE n -> 
+                let env, code = call env ".tuple" n false in
+                (env, code)
             | DROP -> (snd env#pop, [])
             | DUP ->
                 let x = env#peek in
@@ -714,6 +718,10 @@ let compile cmd env imports code =
             | ARRAY n ->
                 let s, env = env#allocate in
                 let env, code = call env ".array_patt" 2 false in
+                (env, [ Mov (L (box n), s)] @ set_opnd_type s IntOpnd @ code)
+            | TUPLETAG n ->
+                let s, env = env#allocate in
+                let env, code = call env ".tuple_patt" 2 false in
                 (env, [ Mov (L (box n), s)] @ set_opnd_type s IntOpnd @ code)
             | PATT StrCmp -> call env ".string_patt" 2 false
             | PATT patt ->

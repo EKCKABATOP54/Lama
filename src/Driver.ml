@@ -210,11 +210,12 @@ let[@ocaml.warning "-32"] main =
     with
     | `Ok prog -> (
         let (_, p) = prog in
-
-        TypeChecker.check_expr default_ctx p;
-        
+  
         cmd#dump_AST (snd prog);
         cmd#dump_source (snd prog);
+        
+        TypeChecker.check_expr default_ctx p;
+        
         match cmd#get_mode with
         | `Default | `Compile -> ignore @@ X86.build cmd prog
         | `BC -> SM.ByteCode.compile cmd (SM.compile cmd prog)

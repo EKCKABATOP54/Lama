@@ -219,7 +219,10 @@ extern PACKED_VALUE_TYPE Llength (void *p, OPND_TYPE_T p_type) {
   if (TAG(TO_DATA(p)->data_header) == STRING_TAG){
     return pack_type(BOX(LEN(TO_DATA(p)->data_header)), INT_OPND_TYPE);
   }
-  if (TAG(TO_DATA(p)->data_header) == SEXP_TAG){
+  if (TAG(TO_DATA(p)->data_header) == SEXP_TAG && p_type == SEXP_OPND_TYPE){
+    return pack_type(BOX(LEN(TO_DATA(p)->data_header))/2, INT_OPND_TYPE);
+  }
+  if (TAG(TO_DATA(p)->data_header) == SEXP_TAG && p_type == TUPLE_OPND_TYPE){
     return pack_type(BOX(LEN(TO_DATA(p)->data_header))/2, INT_OPND_TYPE);
   }
   return pack_type(BOX(LEN(TO_DATA(p)->data_header)/2), INT_OPND_TYPE);
@@ -859,6 +862,36 @@ extern PACKED_VALUE_TYPE Barray (int bn, OPND_TYPE_T bn_type, ...) {
 extern memory_chunk heap;
 #endif
 
+extern PACKED_VALUE_TYPE Btuple(int bn, OPND_TYPE_T bn_type, ...){
+  va_list args;
+  int     i;
+  int     ai;
+  int     ai_type;
+  size_t *p;
+  data   *r;
+  int     n = UNBOX(bn);
+
+  PRE_GC();
+
+  r                = (data *)alloc_sexp(2*n+1); // 2x because of types + 1 for offset from tag
+  ((sexp *)r)->tag = TUPLE_SEXP_TAG;
+
+  va_start(args, bn_type);
+
+  for (i = 1; i <= n; i++) {
+    ai                      = va_arg(args, int);
+    ai_type                 = va_arg(args, int);
+    p                       = (size_t *)ai;
+    ((int *)r->contents)[2*i+1] = ai;
+    ((int *)r->contents)[2*i] = ai_type;
+  }
+
+  va_end(args);
+
+  POST_GC();
+  return pack_type(((int *)r->contents), TUPLE_OPND_TYPE);
+}
+
 extern PACKED_VALUE_TYPE Bsexp (int bn, OPND_TYPE_T bn_type, ...) { //TODO: FIX TYPES
   va_list args;
   int     i;
@@ -920,11 +953,27 @@ extern int Barray_patt (void *d, OPND_TYPE_T d_type, int n, OPND_TYPE_T n_type) 
   else {
     r = TO_DATA(d);
     int rt = get_tag(r);
-    int rt2  = ARRAY_TAG;
     int rlen = get_len(r);
     return pack_type(BOX(get_tag(r) == ARRAY_TAG && get_len(r)/2 == UNBOX(n)), INT_OPND_TYPE); //len/=2 because size = 2*elem, because {type, elem}*
   }
 }
+
+extern PACKED_VALUE_TYPE Btuple_patt (void *d, OPND_TYPE_T d_type, int n, OPND_TYPE_T n_type) { //TODO: FIX TYPES
+  data *r;
+
+  int ret;
+  if (UNBOXED(d)) ret = BOX(0);
+  else {
+    r = TO_DATA(d);
+    int tg = TAG(r->data_header);
+    int stag = TO_SEXP(d)->tag;
+    //printf("%d %d\n%d %d\n%d %d\n", tg, SEXP_TAG, stag, TUPLE_SEXP_TAG, LEN(r->data_header)/2, UNBOX(n));
+    ret = BOX(TAG(r->data_header) == SEXP_TAG && TO_SEXP(d)->tag == TUPLE_SEXP_TAG
+               && LEN(r->data_header)/2 == UNBOX(n));
+  }
+  return pack_type(ret, INT_OPND_TYPE);
+}
+
 
 extern PACKED_VALUE_TYPE Bstring_patt (void *x, OPND_TYPE_T x_type, void *y, OPND_TYPE_T y_type) { //TODO: FIX_TYPES
   data *rx = (data *)BOX(NULL), *ry = (data *)BOX(NULL);
@@ -942,32 +991,32 @@ extern PACKED_VALUE_TYPE Bstring_patt (void *x, OPND_TYPE_T x_type, void *y, OPN
   }
 }
 
-extern int Bclosure_tag_patt (void *x, int x_type) {//TODO: FIX_TYPES
-  if (UNBOXED(x)) return BOX(0);
+extern PACKED_VALUE_TYPE Bclosure_tag_patt (void *x, int x_type) {//TODO: FIX_TYPES
+  if (UNBOXED(x)) return pack_type(BOX(0), INT_OPND_TYPE);
 
-  return BOX(TAG(TO_DATA(x)->data_header) == CLOSURE_TAG);
+  return pack_type(BOX(TAG(TO_DATA(x)->data_header) == CLOSURE_TAG), INT_OPND_TYPE);
 }
 
 extern PACKED_VALUE_TYPE Bboxed_patt (void *x, int x_type) { return pack_type(BOX(UNBOXED(x) ? 0 : 1), INT_OPND_TYPE); }
 
 extern PACKED_VALUE_TYPE Bunboxed_patt (void *x, int x_type) { return pack_type(BOX(UNBOXED(x) ? 1 : 0), INT_OPND_TYPE); }
 
-extern int Barray_tag_patt (void *x, int x_type) { //TODO: FIX_TYPES
-  if (UNBOXED(x)) return BOX(0);
+extern PACKED_VALUE_TYPE Barray_tag_patt (void *x, int x_type) { //TODO: FIX_TYPES
+  if (UNBOXED(x)) return pack_type(BOX(0), INT_OPND_TYPE);
 
-  return BOX(TAG(TO_DATA(x)->data_header) == ARRAY_TAG);
+  return pack_type(BOX(TAG(TO_DATA(x)->data_header) == ARRAY_TAG), INT_OPND_TYPE);
 }
 
-extern int Bstring_tag_patt (void *x, int x_type) { //TODO: FIX_TYPES
-  if (UNBOXED(x)) return BOX(0);
+extern PACKED_VALUE_TYPE Bstring_tag_patt (void *x, OPND_TYPE_T x_type) { //TODO: FIX_TYPES
+  if (UNBOXED(x)) return pack_type(BOX(0), INT_OPND_TYPE);
 
-  return BOX(TAG(TO_DATA(x)->data_header) == STRING_TAG);
+  return pack_type(BOX(TAG(TO_DATA(x)->data_header) == STRING_TAG), INT_OPND_TYPE);
 }
 
-extern int Bsexp_tag_patt (void *x, int x_type) { //TODO: FIX_TYPES
-  if (UNBOXED(x)) return BOX(0);
+extern PACKED_VALUE_TYPE Bsexp_tag_patt (void *x, int x_type) { //TODO: FIX_TYPES
+  if (UNBOXED(x)) return pack_type(BOX(0), INT_OPND_TYPE);
 
-  return BOX(TAG(TO_DATA(x)->data_header) == SEXP_TAG);
+  return pack_type(BOX(TAG(TO_DATA(x)->data_header) == SEXP_TAG), INT_OPND_TYPE);
 }
 
 extern PACKED_VALUE_TYPE Bsta (void *x, OPND_TYPE_T x_type, int i, OPND_TYPE_T i_type, void *v, OPND_TYPE_T v_type) {

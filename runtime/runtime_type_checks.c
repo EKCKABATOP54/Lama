@@ -37,6 +37,9 @@ char* type_to_string(OPND_TYPE_T t){
     else if(t == SEXP_OPND_TYPE){
         return "sexp";
     }
+    else if(t == TUPLE_OPND_TYPE){
+        return "tuple";
+    }
     else{
         return "UndefinedType";
     }
@@ -80,7 +83,7 @@ void Belem_type_check(void *p, OPND_TYPE_T p_type, int i, OPND_TYPE_T i_type){
 }
 
 void Llength_type_check (void *p, OPND_TYPE_T p_type){
-    if(!(p_type == ARR_OPND_TYPE || p_type == STR_OPND_TYPE || p_type == SEXP_OPND_TYPE )){
+    if(!(p_type == ARR_OPND_TYPE || p_type == STR_OPND_TYPE || p_type == SEXP_OPND_TYPE  || TUPLE_OPND_TYPE)){
         type_check_error("%s has no \"length\" attribute", type_to_string(p_type));
     }
 }
