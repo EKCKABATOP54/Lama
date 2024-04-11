@@ -1,6 +1,19 @@
 open GT
 open Language
 
+
+type lamaType =  Sexp 
+                  | Int 
+                  | String 
+                  | Array of lamaType 
+                  | Any 
+                  | Callable of (lamaType list) * lamaType 
+                  | Unit 
+                  | Union of lamaType list 
+                  | Tuple of lamaType list 
+                  | VariantType of string * (string * lamaType) list 
+
+
 let rec type_to_string t = match t with
                         | Sexp -> "Sexpr"
                         | Int -> "Int"
@@ -135,7 +148,7 @@ let rec is_consistent_patt patt t = match patt with
 *)
 module TypeContext : sig
   type type_flow_t = (lamaType * Loc.t option) list
-  type t = ((string * (lamaType * type_flow_t)) list) (* variable * (type annotation * (lamaType * typeLoc) list) *)
+  type t = ((string * (lamaType * type_flow_t)) list) * (string * (string * lamaType) list) list(* (variable * (type annotation * (lamaType * typeLoc) list)) * (variant type list)  where variant type = typename * ( (ctr_name * ctr_type)list)*)
   (*
   val add_type_to_type_flow : t -> string -> (lamaType * Loc.t option) -> t
   val add_types_to_type_flow : t -> string -> type_flow_t -> t
@@ -147,48 +160,80 @@ module TypeContext : sig
   val empty_type_flow : type_flow_t
   val empty_ctx : t
   val get_var_type_flow : t -> string -> type_flow_t
-  val get_var_type : t -> string -> lamaType
+  val get_var_type : t -> string -> lamaType  
   val to_string : t -> string
+  val lamaTypeAnnotationTolamaType : t -> lamaTypeAnnotation -> lamaType
 end = struct
   type type_flow_t = (lamaType * Loc.t option) list
-  type t = ((string * (lamaType * type_flow_t)) list)
+  type t = ((string * (lamaType * type_flow_t)) list) * (string * (string * lamaType) list) list
   let empty_type_flow = []
-  let empty_ctx = []
-  let rec set_type_flow_types ctx var ts = match ctx with 
+  let empty_ctx = ([], [])
+  
+  let rec set_type_flow_types' ctx var ts = match ctx with 
                                                   [] -> raise (Failure (Printf.sprintf "Undefined variable %s" var))
                                                   | (v, (va, tf))::ctx -> if var = v then (
                                                                                           v, 
                                                                                           (va, ts)
                                                                                           )::ctx
-                                                                          else (v, (va, tf))::(set_type_flow_types ctx var ts)
+                                                                          else (v, (va, tf))::(set_type_flow_types' ctx var ts)
+  let set_type_flow_types (tf_ctx, td_ctx) var ts = (set_type_flow_types' tf_ctx var ts, td_ctx)
+  
   (*Sets ts from inner ctx in outer ctx, excepl local variables of inner ctx*)
-  let rec update_outer_context outer_ctx inner_ctx inner_locals = List.fold_left (fun o (var, (_, type_flow)) -> if List.mem var inner_locals then o else set_type_flow_types o var type_flow) outer_ctx inner_ctx
+  let rec update_outer_context' outer_ctx inner_ctx inner_locals = List.fold_left (fun o (var, (_, type_flow)) -> if List.mem var inner_locals then o else set_type_flow_types' o var type_flow) outer_ctx inner_ctx
+  let update_outer_context (outer_ctx, td_outer) (inner_ctx, td_innner) inner_locals = assert (td_outer = td_innner); (update_outer_context' outer_ctx inner_ctx inner_locals, td_outer)
+  
   (*TODO: check that type is compatible with annotation*)
-  let rec add_type_to_type_flow ctx var (new_type, new_type_loc) = match ctx with
+  let rec add_type_to_type_flow' ctx var (new_type, new_type_loc) = match ctx with
                                                           [] -> raise (Failure (Printf.sprintf "Undefined variable %s" var))
                                                         | (v, (va, tf)):: ctx -> if var = v then  (
                                                           v, 
                                                           ( va, (if not (is_consistent new_type va) then raise (Failure (Printf.sprintf "Type %s of value is incompatible with variable \'%s\' type annotation %s" (type_to_string new_type) (var) (type_to_string va)));
                                                                 if List.mem (new_type, new_type_loc) tf then tf else (new_type, new_type_loc)::tf)
                                                           )
-                                                        ) ::ctx else (v, (va, tf)):: add_type_to_type_flow ctx var (new_type, new_type_loc)
-  let rec add_types_to_type_flow ctx var ts = List.fold_left (fun ctx t -> add_type_to_type_flow ctx var t) ctx ts
+                                                        ) ::ctx else (v, (va, tf)):: add_type_to_type_flow' ctx var (new_type, new_type_loc)
+  let add_type_to_type_flow (ctx, td) var t = (add_type_to_type_flow' ctx var t, td)
+                                                       
+  let rec add_types_to_type_flow' ctx var ts = List.fold_left (fun ctx t -> add_type_to_type_flow' ctx var t) ctx ts
+  let add_types_to_type_flow (ctx, td) var ts = add_types_to_type_flow' ctx var ts
   
-                                                        (*Updates context with variable names and type annotations. If variable exist in old context, annotation and type flow discarded and replaced with new annotation and empty type flow*)
-  let update_ctx ctx vars = List.fold_left (fun ctx' (var, anType) -> (var, (anType, empty_type_flow))::ctx') (List.filter (fun (vname, _) -> not (List.mem vname (List.map fst vars))) ctx) vars
+  (*Updates context with variable names and type annotations. If variable exist in old context, annotation and type flow discarded and replaced with new annotation and empty type flow*)
+  let update_ctx' ctx vars = List.fold_left (fun ctx' (var, anType) -> (var, (anType, empty_type_flow))::ctx') (List.filter (fun (vname, _) -> not (List.mem vname (List.map fst vars))) ctx) vars
+  let update_ctx (ctx, td) vars = (update_ctx' ctx vars, td)
 
   (*Merges type flows of contexts*)
-  let merge_ctxs ctx1 ctx2 = List.fold_left (fun o (var, (_, type_flow)) -> add_types_to_type_flow o var type_flow) ctx1 ctx2
-
-  let rec get_var_type_flow ctx var = match ctx with 
-                                            [] -> raise (Failure (Printf.sprintf "Undefined variable %s" var))
-                                            | (v, (_, tflow))::ctx' -> if var = v then tflow else get_var_type_flow ctx' var
-
+  let merge_ctxs' ctx1 ctx2 = List.fold_left (fun o (var, (_, type_flow)) -> add_types_to_type_flow' o var type_flow) ctx1 ctx2
+  let merge_ctxs (ctx1, td1) (ctx2, td2) = assert (td1 = td2); (merge_ctxs' ctx1 ctx2, td1)
   
-  let rec get_var_type ctx var = match ctx with 
+
+  let rec get_var_type_flow' ctx var = match ctx with 
+                                            [] -> raise (Failure (Printf.sprintf "Undefined variable %s" var))
+                                            | (v, (_, tflow))::ctx' -> if var = v then tflow else get_var_type_flow' ctx' var
+  let get_var_type_flow (ctx, _) var = get_var_type_flow' ctx var
+  
+  let rec get_var_type' ctx var = match ctx with 
                                         [] -> raise (Failure (Printf.sprintf "Undefined variable %s" var))
-                                        | (v, (vt, _ )) :: ctx' -> if var = v then vt else get_var_type ctx' var
-  let to_string ctx = String.concat "\n" (List.map (fun (var, (vt, vtf)) -> Printf.sprintf "(%s, (%s, %s))" var (type_to_string vt) (String.concat "," (List.map (fun (t, l) -> Printf.sprintf "(%s, ?)" (type_to_string t)) vtf)) ) ctx)
+                                        | (v, (vt, _ )) :: ctx' -> if var = v then vt else get_var_type' ctx' var
+  let get_var_type (ctx, _) = get_var_type' ctx
+  
+  let to_string (ctx, _) = String.concat "\n" (List.map (fun (var, (vt, vtf)) -> Printf.sprintf "(%s, (%s, %s))" var (type_to_string vt) (String.concat "," (List.map (fun (t, l) -> Printf.sprintf "(%s, ?)" (type_to_string t)) vtf)) ) ctx)
+  
+  let rec getVariantDefByName' tds tname = match tds with 
+                                                      [] -> raise (Failure (Printf.sprintf "Undefined type %s" tname))
+                                                      | (vname, ctrs)::tds when vname = tname -> VariantType (vname, ctrs)
+                                                      | _ -> getVariantDefByName' (List.tl tds) tname
+  let getVariantDefByName (_, tds) tname = getVariantDefByName' tds tname
+
+  let rec lamaTypeAnnotationTolamaType ((_, td) as ctx) ta = match ta with  
+                                                          TA_Sexp -> Sexp
+                                                        | TA_Int -> Int
+                                                        | TA_String -> String
+                                                        | TA_Array ta -> Array (lamaTypeAnnotationTolamaType ctx ta)
+                                                        | TA_Any -> Any
+                                                        | TA_Callable (ls, ta) -> Callable (List.map (lamaTypeAnnotationTolamaType ctx) ls, lamaTypeAnnotationTolamaType ctx ta)
+                                                        | TA_Unit -> Unit
+                                                        | TA_Union ls -> Union (List.map (lamaTypeAnnotationTolamaType ctx) ls)
+                                                        | TA_Tuple ls -> Tuple (List.map (lamaTypeAnnotationTolamaType ctx) ls)
+                                                        | TA_VariantType tname -> getVariantDefByName ctx tname
 end
 
 let rec collect_refs e = match e with (*TODO: more precise analysis*)
@@ -289,23 +334,27 @@ let rec check_annotations (ctx : TypeContext.t ) (e : Expr.t ) : lamaType =
                                                       
                                                       (_, `Variable (init, v_type)) ->  (match init with 
                                                                                         Some e -> let init_t = check_annotations ctx e
-                                                                                                  in if is_consistent init_t v_type then () (*Ok*) else raise (Failure "ff")
+                                                                                                  in if is_consistent init_t (TypeContext.lamaTypeAnnotationTolamaType ctx v_type) then () (*Ok*) else raise (Failure "ff")
                                                                                         | None -> ());
-                                                                                        TypeContext.update_ctx ctx [(vname, v_type)]
-                                                      | (_, `Fun (args, _, fun_t) ) -> TypeContext.update_ctx ctx [(vname, fun_t)]
+                                                                                        TypeContext.update_ctx ctx [(vname, 
+                                                                                                                          TypeContext.lamaTypeAnnotationTolamaType ctx v_type)]
+                                                      | (_, `Fun (args, _, fun_t) ) -> TypeContext.update_ctx ctx [(vname,
+                                                                                                                          TypeContext.lamaTypeAnnotationTolamaType ctx fun_t)]
+                                                      | (_, `VariantTypeDecl _) -> ctx (*TODO*)
                                                     ) ctx ds
                           in
                           List.iter (fun (fname, d) -> match d with 
                           (_, `Variable _) -> ()
-                          | (_, `Fun (args, body , Callable (args_t, ret_t)) ) ->  
+                          | (_, `Fun (args, body , TA_Callable (args_t, ret_t)) ) ->  
                                                                 if List.length args <> List.length args_t then raise (Failure "Incorrect function type. Argument lenght mismatch");
-                                                                let ctx = TypeContext.update_ctx ctx (List.combine args args_t)
+                                                                let ctx = TypeContext.update_ctx ctx (List.combine args (List.map (TypeContext.lamaTypeAnnotationTolamaType ctx) args_t))
                                                                 in let actual_ret_type = check_annotations ctx body 
-                                                                in if not @@ is_consistent actual_ret_type ret_t then raise (Failure (Printf.sprintf "Actual return type %s is not consistent with declared %s" (type_to_string actual_ret_type) (type_to_string ret_t)))
+                                                                in if not @@ is_consistent actual_ret_type (TypeContext.lamaTypeAnnotationTolamaType ctx ret_t) then raise (Failure (Printf.sprintf "Actual return type %s is not consistent with declared %s" (type_to_string actual_ret_type) (type_to_string (TypeContext.lamaTypeAnnotationTolamaType ctx ret_t))))
                           
-                          | (_, `Fun (args, body, Any)) ->  let ctx = TypeContext.update_ctx ctx (List.map (fun x -> (x, Any)) args)
+                          | (_, `Fun (args, body, TA_Any)) ->  let ctx = TypeContext.update_ctx ctx (List.map (fun x -> (x, Any)) args)
                                                             in let _ = check_annotations ctx body in ()
                           | (_, `Fun _) -> raise (Failure "Incorrect function type")
+                          | (_, `VariantTypeDecl _) -> () (*TODO*)
                           ) ds;
                           check_annotations ctx e
   | Expr.Call (fun_expr, args) -> let args_t = List.fold_left (fun args_t arg -> (check_annotations ctx arg)::args_t) [] args          
@@ -333,6 +382,7 @@ let rec check_annotations (ctx : TypeContext.t ) (e : Expr.t ) : lamaType =
                                 let res_t_ls = List.map ( fun (p, b) -> let (_, ctx) = check_pattern_type ctx p in check_annotations ctx b) bs
                                 in  let res_t_ls = remove_duplicates res_t_ls
                                     in if List.length res_t_ls = 1 then List.hd res_t_ls else Union res_t_ls
+  | Expr.DataConstr _ -> Any
   | _ -> raise (Failure "Not implemented2")     
 
 
@@ -437,18 +487,25 @@ in (List.map (fun t -> (t, None)) possible_elem_types, index_ctx)
 
   | Expr.Unit -> ([(Unit, None)], ctx)                                    
 
-  | Expr.Scope (ds, e) ->   let inner_ctx = TypeContext.update_ctx ctx (List.map (fun (var, decl ) -> match decl with (_, `Fun (_,_, t)) -> (var, t) | (_, `Variable (_, t)) -> (var, t)) ds) in
+  | Expr.Scope (ds, e) ->   let inner_ctx = List.fold_left  (fun ctx (v, d) -> 
+                                                                              match d with 
+                                                                              (_, `Fun (_,_, t)) -> TypeContext.update_ctx ctx [(v, TypeContext.lamaTypeAnnotationTolamaType ctx t)]
+                                                                              | (_, `Variable (_, t)) -> TypeContext.update_ctx ctx [(v, TypeContext.lamaTypeAnnotationTolamaType ctx t)]
+                                                                              | (_, `VariantTypeDecl _) -> ctx
+                                                            ) ctx ds in
                             let inner_ctx = List.fold_left (fun ctx (var, (_, vardecl)) -> 
                                                               match vardecl with
-                                                                    `Fun (_, _, t) -> TypeContext.set_type_flow_types ctx var [(t, None)]
+                                                                    `Fun (_, _, t) -> TypeContext.set_type_flow_types ctx var [(TypeContext.lamaTypeAnnotationTolamaType ctx t, None)]
                                                                     | `Variable (Some e, _) -> let (type_flow, new_ctx) = check_expr_type_flow ctx e in 
                                                                                             TypeContext.set_type_flow_types new_ctx var type_flow
-                                                                    | `Variable (None, _) -> TypeContext.set_type_flow_types ctx var TypeContext.empty_type_flow) inner_ctx ds   in
+                                                                    | `Variable (None, _) -> TypeContext.set_type_flow_types ctx var TypeContext.empty_type_flow
+                                                                    | `VariantTypeDecl _-> ctx (*TODO*)) inner_ctx ds   in
                             let (tflow, inner_ctx) = check_expr_type_flow inner_ctx e in
                             (tflow, TypeContext.update_outer_context ctx inner_ctx (List.map (fun (var, _) -> var) ds))
   | Expr.Tuple ls ->  let (tls, ctx) = List.fold_left (fun (tls, ctx) e -> let (etls, ctx) = check_expr_type_flow ctx e in ((Union (List.map fst etls))::tls, ctx) ) ([], ctx) ls
                       in ([(Tuple (List.map (fun (Union ts) -> Union (List.rev ts)) tls), None)], ctx)
 
+  | Expr.DataConstr _ -> ([ (Any, None)], ctx)
   | _ -> raise (Failure "Not implemented1")
 
 (* Should also work this:

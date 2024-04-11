@@ -85,6 +85,7 @@ module Value =
     | FunRef  of string * string list * 'a * int
     | Builtin of string
     | Tuple of ('a, 'b) t array
+    | DataConstr of string * ('a, 'b) t
     with show, html, foldl
 
     let is_int = function Int _ -> true | _ -> false
@@ -351,27 +352,30 @@ module Pattern =
   end
 
 
-
-@type lamaType =  Sexp 
-                  | Int 
-                  | String 
-                  | Array of lamaType 
-                  | Any 
-                  | Callable of (lamaType list) * lamaType 
-                  | Unit 
-                  | Union of lamaType list 
-                  | Tuple of lamaType list 
-                  with show, html, foldl
+@type lamaTypeAnnotation =  TA_Sexp 
+                  | TA_Int 
+                  | TA_String 
+                  | TA_Array of lamaTypeAnnotation
+                  | TA_Any 
+                  | TA_Callable of (lamaTypeAnnotation list) * lamaTypeAnnotation
+                  | TA_Unit 
+                  | TA_Union of lamaTypeAnnotation list 
+                  | TA_Tuple of lamaTypeAnnotation list 
+                  | TA_VariantType of string
+                  with show, html, foldl                  
+            
 ostap(
-  parseLamaType:
-    parseLamaTypeSexp: "Sexp" {Sexp}
-    | parseLamaTypeInt: "Int" {Int}
-    | parseLamaTypeString: "String" {String}
-    | parseLamaTypeArray: "Array" elem_t:parseLamaType {Array elem_t}
-    | parseLamaTypeAny: "Any" {Any}
-    | parseLamaTypeCallable: "Callable" "[" args_t:(!(Util.list0)[parseLamaType]) "]" ret_t:parseLamaType{Callable (args_t, ret_t)}
-    | parseLamaTypeUnit : "Unit" {Unit}
-    | parseLamaTypeUnion: "Union" "[" tls:(!(Util.list0)[parseLamaType]) "]" {Union tls}
+  parseLamaTypeAnnotation:
+    parseLamaTypeAnnotationSexp: "Sexp" {TA_Sexp}
+    | parseLamaTypeAnnotationInt: "Int" {TA_Int}
+    | parseLamaTypeAnnotationString: "String" {TA_String}
+    | parseLamaTypeAnnotationArray: "Array" elem_t:parseLamaTypeAnnotation {TA_Array elem_t}
+    | parseLamaTypeAnnotationAny: "Any" {TA_Any}
+    | parseLamaTypeAnnotationCallable: "Callable" "[" args_t:(!(Util.list0)[parseLamaTypeAnnotation]) "]" ret_t:parseLamaTypeAnnotation{TA_Callable (args_t, ret_t)}
+    | parseLamaTypeAnnotationUnit : "Unit" {TA_Unit}
+    | parseLamaTypeAnnotationUnion : "Union" "[" tls:(!(Util.list0)[parseLamaTypeAnnotation]) "]" {TA_Union tls}
+    | parseLamaTypeAnnotationTyple : "Tuple" "[" tls:(!(Util.list0)[parseLamaTypeAnnotation]) "]" {TA_Tuple tls}
+    | parseLamaTypeAnnotationVariantType : (typename:UIDENT {TA_VariantType typename})
     )
 
 
@@ -421,7 +425,8 @@ module Expr =
     (* intrinsic (for evaluation) *) | Intrinsic of (t config, t config) arrow
     (* control (for control flow) *) | Control   of (t config, t * t config) arrow
     (* tuple *)                      | Tuple of t list
-    and decl = qualifier * [`Fun of string list * t * lamaType| `Variable of t option * lamaType]
+    (*constructot of variant type*)  | DataConstr of string * t
+    and decl = qualifier * [`Fun of string list * t * lamaTypeAnnotation| `Variable of t option * lamaTypeAnnotation | `VariantTypeDecl of (string * lamaTypeAnnotation) list]
     with show, html, foldl
 
     let notRef = function Reff -> false | _ -> true
@@ -498,6 +503,7 @@ module Expr =
              (fun (vs, bd, bnd) -> function
               | (name, (_, `Variable (value, _))) -> (name, Mut) :: vs, (match value with None -> bd | Some v -> Seq (Ignore (Assign (Ref name, v)), bd)), bnd
               | (name, (_, `Fun (args, b, _)))  -> (name, FVal) :: vs, bd, (name, Value.FunRef (name, args, b, 1 + State.level st)) :: bnd
+              | (name, (_, `VariantTypeDecl _ )) -> vs, bd, bnd
              )
              ([], body, [])
              (List.rev @@
@@ -781,6 +787,10 @@ module Expr =
                                                                                                               | None -> []
                                                                                                               | Some args -> args))
                                                                                         }
+      | l:$ "@" tag:UIDENT e:parse[infix][Val]? => {notRef atr} :: (not_a_reference l) => {ignore atr (DataConstr (tag, match e with
+                                                                                                              | None -> Unit
+                                                                                                              | Some e -> e))
+                                                                                        }
       | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (Var x) else Ref x}
 
       | {isVoid atr} => l:$ %"skip" {materialize atr l Skip}
@@ -808,8 +818,8 @@ module Expr =
                let defs, s =
                  List.fold_right (fun (name, def) (defs, s) ->
                      match def with
-                     | (`Local, `Variable (Some expr, _)) ->
-                        (name, (`Local, `Variable (None, Any))) :: defs, Seq (Ignore (Assign (Ref name, expr)), s)
+                     | (`Local, `Variable (Some expr, ta)) ->
+                        (name, (`Local, `Variable (None, ta))) :: defs, Seq (Ignore (Assign (Ref name, expr)), s)
                      | def -> (name, def) :: defs, s)
                    defs
                    ([], s)
@@ -1045,7 +1055,7 @@ module Definition =
   struct
 
     (* The type for a definition: either a function/infix, or a local variable *)
-    type t = string * [`Fun of string list * Expr.t * lamaType option | `Variable of Expr.t option * lamaType option]
+    type t = string * [`Fun of string list * Expr.t * lamaTypeAnnotation option | `Variable of Expr.t option * lamaTypeAnnotation option | `VariantTypeDecl of (string * lamaTypeAnnotation)list]
 
     let unopt_mod = function None -> `Local | Some m -> m
 
@@ -1082,17 +1092,20 @@ module Definition =
           | `Ok infix' -> unopt_mod m, op, name, infix', true
           | `Fail msg  -> report_error ~loc:(Some l#coord) msg
       };
-      local_var[m][infix]: l:$ name:LIDENT var_type:(-":" parseLamaType)? value:(-"=" exprBasic[infix][Expr.Val])? {
+      local_var[m][infix]: l:$ name:LIDENT var_type:(-":" parseLamaTypeAnnotation)? value:(-"=" exprBasic[infix][Expr.Val])? {
         Loc.attach name l#coord;
         match m, value with
         | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
-        | _               -> name, (m,`Variable (value, match var_type with Some t ->t | _ -> Any))
+        | _               -> name, (m,`Variable (value, match var_type with Some t ->t | _ -> TA_Any))
       };
 
       parse[infix]:
         m:(%"var" {`Local} | %"public" e:(%"external")? {match e with None -> `Public | Some _ -> `PublicExtern} | %"external" {`Extern})
           locs:!(Util.list (local_var m infix)) next:";" {locs, infix}
-    | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[Pattern.parse] -")" -fun_type:(-":" parseLamaType)?
+          
+    | "data" typename:UIDENT "=" ctrs:!(Util.listBy)[ostap("|")][ostap(ctr:UIDENT arg:(-"of" parseLamaTypeAnnotation)? {match arg with None -> (ctr, TA_Unit) | Some t -> (ctr, t)})] ";"{[(typename, (`Local, `VariantTypeDecl ctrs ))], infix}
+
+    | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[Pattern.parse] -")" -fun_type:(-":" parseLamaTypeAnnotation)?
           (l:$ "{" body:exprScope[infix'][Expr.Weak] "}" {
             if flag && List.length args != 2 then report_error ~loc:(Some l#coord) "infix operator should accept two arguments";
             match m with
@@ -1111,11 +1124,11 @@ module Definition =
                    args
                    ([], body)
                in
-               [(name, (m, `Fun (args, body, match fun_type with Some t -> t | _ -> Any)))], infix'
+               [(name, (m, `Fun (args, body, match fun_type with Some t -> t | _ -> TA_Any)))], infix'
          } |
          l:$ ";" {
             match m with
-            | `Extern -> [(name, (m, `Fun (List.map (fun _ -> env#get_tmp) args, Expr.Skip, Any)))], infix'
+            | `Extern -> [(name, (m, `Fun (List.map (fun _ -> env#get_tmp) args, Expr.Skip, TA_Any)))], infix'
             | _       -> report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name)
          })
     ) in parse
@@ -1138,6 +1151,7 @@ module Interface =
                 (match item with
                  | `Fun _      -> append "F,"; append name; append ";\n"
                  | `Variable _ -> append "V,"; append name; append ";\n"
+                 | `VariantTypeDecl _ -> append "D,"; append name; append ";\n"
                 )
              | _ -> ()
             )
