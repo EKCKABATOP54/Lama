@@ -697,6 +697,17 @@ let compile cmd env imports code =
                 let s, env = env#allocate in
                 let env, code = call env ".sexp" (n + 1) false in
                 (env, [ Mov (L (box (env#hash t)), s) ] @ code) (*TODO: move type*)
+            | DATACONSTR cname ->
+                let s, env = env#allocate in
+                let env, code = call env ".dataconstr" (1 + 1) false in
+                (env, [ Mov (L (box (env#hash cname)), s) ] @ code)
+            | DATACONSTRNAME cname -> 
+                let s1, env = env#allocate in
+                let s2, env = env#allocate in
+                let env, code = call env ".tag" 3 false in
+                ( env,
+                  [ Mov (L (box (env#hash cname)), s1); Mov (L (box 1), s2) ] @ code
+                )
             | TUPLE n -> 
                 let env, code = call env ".tuple" n false in
                 (env, code)

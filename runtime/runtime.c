@@ -892,6 +892,22 @@ extern PACKED_VALUE_TYPE Btuple(int bn, OPND_TYPE_T bn_type, ...){
   return pack_type(((int *)r->contents), TUPLE_OPND_TYPE);
 }
 
+extern PACKED_VALUE_TYPE Bdataconstr(int* v, OPND_TYPE_T v_type, int tag, OPND_TYPE_T tag_type){
+  data   *r;
+
+  PRE_GC();
+
+  r                = (data *)alloc_sexp(2*1+1);
+  ((sexp *)r)->tag = UNBOX(tag);
+
+  ((int *)r->contents)[2*1+1] = v;
+  ((int *)r->contents)[2*1] = v_type;
+
+  POST_GC();
+  return pack_type(((int *)r->contents), SEXP_OPND_TYPE); //TODO: save type of constructor
+}
+
+
 extern PACKED_VALUE_TYPE Bsexp (int bn, OPND_TYPE_T bn_type, ...) { //TODO: FIX TYPES
   va_list args;
   int     i;

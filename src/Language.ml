@@ -310,6 +310,7 @@ module Pattern =
     (* any sexp value   *) | SexpTag
     (* any array value  *) | ArrayTag
     (* any closure      *) | ClosureTag
+    (*type constuctor*)    | DataConstr of string * t
     with show, foldl, html, fmt
 
     (* Pattern parser *)
@@ -344,6 +345,7 @@ module Pattern =
       | "#" %"sexp"                                  {SexpTag}
       | "#" %"array"                                 {ArrayTag}
       | "#" %"fun"                                   {ClosureTag}
+      | "!" t:UIDENT p:parse?                        {DataConstr (t, match p with Some t -> t | _ -> Wildcard)} (*maybe better add Unit to patterns and replace Wildcard with it*)
       | -"(" parse -")"
     )
 
@@ -361,7 +363,7 @@ module Pattern =
                   | TA_Unit 
                   | TA_Union of lamaTypeAnnotation list 
                   | TA_Tuple of lamaTypeAnnotation list 
-                  | TA_VariantType of string
+                  | TA_TypeId of string
                   with show, html, foldl                  
             
 ostap(
@@ -375,7 +377,7 @@ ostap(
     | parseLamaTypeAnnotationUnit : "Unit" {TA_Unit}
     | parseLamaTypeAnnotationUnion : "Union" "[" tls:(!(Util.list0)[parseLamaTypeAnnotation]) "]" {TA_Union tls}
     | parseLamaTypeAnnotationTyple : "Tuple" "[" tls:(!(Util.list0)[parseLamaTypeAnnotation]) "]" {TA_Tuple tls}
-    | parseLamaTypeAnnotationVariantType : (typename:UIDENT {TA_VariantType typename})
+    | parseLamaTypeAnnotationVariantType : (typename:UIDENT {TA_TypeId typename})
     )
 
 
@@ -426,6 +428,8 @@ module Expr =
     (* control (for control flow) *) | Control   of (t config, t * t config) arrow
     (* tuple *)                      | Tuple of t list
     (*constructot of variant type*)  | DataConstr of string * t
+    (*type cast*)                    | Roll of lamaTypeAnnotation
+    (*type cast*)                    | UnRoll of lamaTypeAnnotation
     and decl = qualifier * [`Fun of string list * t * lamaTypeAnnotation| `Variable of t option * lamaTypeAnnotation | `VariantTypeDecl of (string * lamaTypeAnnotation) list]
     with show, html, foldl
 
@@ -787,7 +791,7 @@ module Expr =
                                                                                                               | None -> []
                                                                                                               | Some args -> args))
                                                                                         }
-      | l:$ "@" tag:UIDENT e:parse[infix][Val]? => {notRef atr} :: (not_a_reference l) => {ignore atr (DataConstr (tag, match e with
+      | l:$ "!" tag:UIDENT e:parse[infix][Val]? => {notRef atr} :: (not_a_reference l) => {ignore atr (DataConstr (tag, match e with
                                                                                                               | None -> Unit
                                                                                                               | Some e -> e))
                                                                                         }

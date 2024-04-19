@@ -28,6 +28,7 @@ type insn =
   | SEXP of string * int
   (*create an Tuple*)
   | TUPLE of int
+  | DATACONSTR of string
   (* load a variable to the stack              *)
   | LD of Value.designation
   (* load a variable address to the stack      *)
@@ -77,6 +78,7 @@ type insn =
   | SWAP
   (* checks the tag and arity of S-expression  *)
   | TAG of string * int
+  | DATACONSTRNAME of string
   (* checks the tag and size of array          *)
   | ARRAY of int
   (* checks the tag and size of tuple          *)
@@ -489,6 +491,11 @@ let[@ocaml.warning "-8-20"] rec eval env
               i,
               o )
             prg'
+      | DATACONSTR cname ->
+        let v::stack' = stack in
+        eval env
+          (cstack, (Value.DataConstr (cname, v)) :: stack', glob, loc, i, o)
+          prg' 
       | SEXP (s, n) ->
           let vs, stack' = split n stack in
           eval env
@@ -626,6 +633,21 @@ let[@ocaml.warning "-8-20"] rec eval env
       | SWAP ->
           let (x :: y :: stack') = stack in
           eval env (cstack, y :: x :: stack', glob, loc, i, o) prg'
+      | DATACONSTRNAME cname ->
+        let (x :: stack') = stack in
+        eval env
+          ( cstack,
+            (Value.of_int
+            @@
+            match x with
+            | Value.DataConstr (cname', _) when cname' = cname -> 1
+            | _ -> 0)
+            :: stack',
+            glob,
+            loc,
+            i,
+            o )
+          prg'
       | TAG (t, n) ->
           let (x :: stack') = stack in
           eval env
@@ -1333,6 +1355,22 @@ let compile cmd ((imports, _), p) =
         in
         let code, env = pattern_list lhead ldrop env ps in
         (env, true, tag @ code @ [ DROP ])
+    | Pattern.DataConstr (cname, t) -> 
+      let lhead, env = env#get_label in
+      let ldrop, env = env#get_label in
+      let tag =
+        [
+          DUP;
+          DATACONSTRNAME cname;
+          CJMP ("nz", lhead);
+          LABEL ldrop;
+          DROP;
+          JMP lfalse;
+          LABEL lhead;
+        ]
+      in
+      let code, env = pattern_list lhead ldrop env [t] in
+      (env, true, tag @ code @ [ DROP ])
     | Pattern.Sexp (t, ps) ->
         let lhead, env = env#get_label in
         let ldrop, env = env#get_label in
@@ -1376,6 +1414,7 @@ let compile cmd ((imports, _), p) =
             (*TODO*)
             (*I don't know what this part does*)
             method c_Tuple _ _ _ = []
+            method c_DataConstr _ _ _ _ = []
 
             method c_UnBoxed _ _ = []
             method c_StringTag _ _ = []
@@ -1431,7 +1470,7 @@ let compile cmd ((imports, _), p) =
         let env, name = env#add_lambda args b in
         ( env#register_call name,
           false,
-          lines @ [ PROTO (name, env#current_function) ] )
+          lines @ [ PROTO (name, env#current_function) ] ) 
     | Expr.Scope (ds, e) ->
         let blab, env = env#get_label in
         let elab, env = env#get_label in
@@ -1445,7 +1484,9 @@ let compile cmd ((imports, _), p) =
               | name, (m, `Variable (Some v, _)) ->
                   ( env#add_name name m Mut,
                     Expr.Seq (Expr.Ignore (Expr.Assign (Expr.Ref name, v)), e),
-                    funs ))
+                    funs )
+              | name, (m, `VariantTypeDecl _) -> (env, e, funs)  (*TODO*)
+            )
             (env, e, []) (List.rev ds)
         in
         let env =
@@ -1518,11 +1559,17 @@ let compile cmd ((imports, _), p) =
           lsexp false
           [ SEXP (t, List.length xs) ]
     | Expr.Tuple xs -> 
-      let lsexp, env = env#get_label in
+      let ltuple, env = env#get_label in
       add_code
-        (compile_list false lsexp env xs)
-        lsexp false
+        (compile_list false ltuple env xs)
+        ltuple false
         [ TUPLE (List.length xs) ]
+    | Expr.DataConstr (cname, v) -> 
+      let lconstr, env = env#get_label in
+      add_code
+        (compile_expr false lconstr env v)
+        lconstr false
+        [ DATACONSTR cname ]
     | Expr.Elem (a, i) ->
         let lelem, env = env#get_label in
         add_code
