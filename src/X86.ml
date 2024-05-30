@@ -1,6 +1,8 @@
 (* TODO: CLOSURES*)
 
 open GT
+open Stdlib.Marshal
+open Base64
 open Language
 
 (* X86 codegeneration interface *)
@@ -30,6 +32,7 @@ type opnd_type =
   | IntOpnd
   | StrOpnd
   | ArrOpnd
+  | UserType of string
 [@@deriving gt ~options:{ show }]
 
 let show_opnd = show opnd
@@ -98,6 +101,23 @@ let type_loc op = match op with
   | M l -> M (Printf.sprintf ("%s_type") l)
   | L _ -> failwith "Unable to set type of L opnd"
   | I (offset, opnd) -> I (offset -1, opnd)
+
+
+let value_type_loc op = match op with
+| R n -> R (n-1)
+| S n -> (match n with 0 -> failwith "invalid op loc" | _ ->  if n > 0 then S (n-1) else S (n-1))
+| C -> failwith "Unable to get typeloc of C value"
+| M _ -> failwith "Unable to get typeloc of M value"
+| L _ -> failwith "Unable to get typeloc of L value"
+| I (offset, opnd) -> I (offset -1, opnd)
+
+let variable_type_loc vloc = match vloc with
+  | R _ -> failwith "Unable to get typeloc of R variable"
+  | S n -> (match n with 0 -> failwith "invalid op loc" | _ ->  if n > 0 then S (n-2) else S (n-2))
+  | C -> failwith "Unable to get typeloc of C variable"
+  | M l -> M (Printf.sprintf ("%s_type") l) (*TODO*)
+  | L _ -> failwith "Unable to get typeloc of L variable"
+  | I (offset, opnd) -> I (offset -2, opnd)
 
 let type_tag t = match t with
   | UndefinedOpnd -> 777
@@ -189,8 +209,9 @@ let compile cmd env imports code =
   let box n = (n lsl 1) lor 1 in
   let rec compile' env scode =
     let on_stack = function S _ -> true | _ -> false in
+    let not_in_reg = function R _ -> false | _ -> true in
     let mov x s =
-      if on_stack x && on_stack s then [ Mov (x, eax); Mov (eax, s) ]
+      if not_in_reg x && not_in_reg s then [ Mov (x, eax); Mov (eax, s) ]
       else [ Mov (x, s) ]
     in
     let callc env n tail =
@@ -348,8 +369,14 @@ let compile cmd env imports code =
             | CONST n ->
                 let s, env' = env#allocate in
                 (env', (set_opnd_type s IntOpnd) @ [ Mov (L (box n), s) ])
-                
-
+            | VARTYPEINIT (x, t) ->
+                let t_serailized : string = Base64.encode_exn( Marshal.to_string t [Compat_32])in
+                let t_deserialized : lamaType = Marshal.from_string (Base64.decode_exn t_serailized) 0 in
+                let s, env = env#string t_serailized in
+                let l, env = env#allocate in
+                let env, gen_ocaml_value_code = call env "gen_ocaml_value" 1 false in (*TODO : dont pass types to function? or type = value of type type*)
+                let xt, env = env#pop in
+                (env, [Mov (M ("$" ^ s), l)] @ gen_ocaml_value_code @ (mov xt (variable_type_loc (env #loc x))))
             | STRING s ->
                 let s, env = env#string s in
                 let l, env = env#allocate in
@@ -373,6 +400,21 @@ let compile cmd env imports code =
 
                   )
                   )
+            | ST x ->
+                let env = env#variable x in
+                let s = env#peek in
+                let xloc = env#loc x in
+                let actual_type_loc, env = env#allocate in
+                let expected_type_loc, env = env#allocate in
+                let push_actual_type = mov (value_type_loc s) actual_type_loc in 
+                let push_expected_type = mov (variable_type_loc xloc) expected_type_loc in
+                let env, typecheck = call env "extern_ocaml_is_consistent" 2 false in
+                let res, env = env#pop in
+                (env, 
+                []@
+                push_actual_type @ push_expected_type @ typecheck
+                @ (mov s xloc) @ (mov (type_loc s) (type_loc xloc)))
+                (*
             | ST x -> (
                 let env' = env#variable x in
                 let s = env'#peek in
@@ -386,6 +428,7 @@ let compile cmd env imports code =
                   | _ -> [ Mov (s, env'#loc x) ] 
                   *)
                   ))
+                  *)
             | STA -> call env ".sta" 3 false
             | STI -> (
                 let v, x, env' = env#pop2 in
@@ -635,11 +678,20 @@ let compile cmd env imports code =
                     ]
                   @ (if f = "main" then
                      [
+                       (*gc init*)
                        Call "__gc_init";
                        Push (I (12, ebp));
                        Push (I (8, ebp));
                        Call "set_args";
                        Binop ("+", L 8, esp);
+                       
+                       
+                       Push (I (12, ebp));
+                       Push (I (8, ebp));
+                       Call "set_lama_global_argv";
+                       Binop ("+", L 8, esp);
+                       
+                       
                      ]
                     else [])
                   @
@@ -697,7 +749,7 @@ let compile cmd env imports code =
                 let s, env = env#allocate in
                 let env, code = call env ".sexp" (n + 1) false in
                 (env, [ Mov (L (box (env#hash t)), s) ] @ code) (*TODO: move type*)
-            | DATACONSTR cname ->
+            | DATACONSTR (cname, t) ->
                 let s, env = env#allocate in
                 let env, code = call env ".dataconstr" (1 + 1) false in
                 (env, [ Mov (L (box (env#hash cname)), s) ] @ code)
@@ -871,7 +923,7 @@ class env prg =
       match x with
       | Value.Global name -> M ("global_" ^ name)
       | Value.Fun name -> M ("$" ^ name)
-      | Value.Local i -> S (2*i + 1)
+      | Value.Local i -> S (3*i + 1) (*type of var, type of value, value*)
       | Value.Arg i -> S (-(2*i + if has_closure then 2 else 1))
       | Value.Access i -> I (word_size * (i + 1), edx)
 
@@ -880,7 +932,7 @@ class env prg =
     method allocate =
       let x, n =
         let allocate' = function
-        | S n :: _ -> (S (n + 2), n + 3) (*One posiiton for type*)
+        | S n :: _ -> (S (n + 2), n + 3) (*One position for type*)
         | _ -> (S (static_size + 1), static_size + 2) (*One posiiton for type*)
         in
         allocate' stack
@@ -1080,8 +1132,9 @@ let build cmd prog =
   cmd#dump_file "s" (genasm cmd prog);
   cmd#dump_file "i" (Interface.gen prog);
   let inc = get_std_path () in
+  let libpath = Printf.sprintf "%s/../bindings" (get_std_path ()) in
   let compiler = "gcc" in
-  let flags = "-no-pie -m32" in
+  let flags = Printf.sprintf "-no-pie -m32 -I \"%s/../bindings\" -I `ocamlc -where` -lcurses -lm -lzstd" libpath in
   match cmd#get_mode with
   | `Default ->
       let objs = find_objects (fst @@ fst prog) cmd#get_include_paths in
@@ -1092,9 +1145,10 @@ let build cmd prog =
           Buffer.add_string buf " ")
         objs;
       let gcc_cmdline =
-        Printf.sprintf "%s %s %s %s %s.s %s %s/runtime.a" compiler flags
+        Printf.sprintf "%s %s %s %s %s.s %s %s/runtime.a %s/Bindings.a" compiler flags
           cmd#get_debug cmd#get_output_option cmd#basename (Buffer.contents buf)
           inc
+          libpath
       in
       Sys.command gcc_cmdline
   | `Compile ->

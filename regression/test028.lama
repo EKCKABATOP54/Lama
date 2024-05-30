@@ -1,4 +1,4 @@
-var n, i, result;
+var n, i, result=0;
 
 fun fact (n) {
   if n <= 1

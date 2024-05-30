@@ -1,0 +1,17 @@
+make -C src
+make[1]: Entering directory '/home/androposh/Projects/Lama/src'
+dune build ./Driver.exe
+Entering directory '/home/androposh/Projects/Lama'
+Leaving directory '/home/androposh/Projects/Lama'
+ln -sf ../_build/default/src/Driver.exe lamac
+make[1]: Leaving directory '/home/androposh/Projects/Lama/src'
+make -C runtime
+make[1]: Entering directory '/home/androposh/Projects/Lama/runtime'
+ar rc runtime.a runtime_type_checks.o runtime.o gc.o runtime_type_checks_generated.o
+make[1]: Leaving directory '/home/androposh/Projects/Lama/runtime'
+make -C byterun
+make[1]: Entering directory '/home/androposh/Projects/Lama/byterun'
+cc -m32 -g2 -fstack-protector-all -o byterun byterun.o ../src/camlcode.o ../runtime/runtime.a -ldl -lm -L `ocamlc -where`-lasmrun
+/usr/bin/ld: ../src/camlcode.o: warning: relocation in read-only section `.text.caml.camlStdlib__int_of_string_opt_181'
+/usr/bin/ld: make[1]: *** [Makefile:4: all] Terminated
+make: *** [Makefile:10: all] Terminated

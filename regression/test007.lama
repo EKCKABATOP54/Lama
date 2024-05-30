@@ -1,5 +1,7 @@
-var x, y, z;
-
+var x : Int, y, z;
+fun f(){
+    var a = 4;
+}
 x := 1;
 y := 2;
 z := x - y - 3;

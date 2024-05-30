@@ -6,6 +6,7 @@ MKDIR ?= mkdir
 
 all:
 	$(MAKE) -C src
+	$(MAKE) -C bindings
 	$(MAKE) -C runtime
 	$(MAKE) -C byterun
 	$(MAKE) -C stdlib

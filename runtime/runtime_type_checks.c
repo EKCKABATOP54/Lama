@@ -6,6 +6,14 @@
 #include "runtime_type_checks.h"
 #include "runtime_common.h"
 
+//#include "Bindings.h"
+
+/*
+#include <caml/mlvalues.h>
+#include <caml/memory.h>
+#include <caml/callback.h>
+*/
+
 #define ERROR_BUF_SIZE 400
 const char error_buffer[ERROR_BUF_SIZE];
 
@@ -80,6 +88,18 @@ void Bsta_type_check(void *x, OPND_TYPE_T x_type, int i, OPND_TYPE_T i_type, voi
 
 void Belem_type_check(void *p, OPND_TYPE_T p_type, int i, OPND_TYPE_T i_type){
     element_access_check(p, p_type, i, i_type);
+}
+
+void run_caml(){
+    static bool caml_inited = false;
+    if(!caml_inited){
+        //printf("initing caml...\n");
+        //fflush(stdout);
+        caml_inited = true;
+        char ** argv = get_lama_global_argv();
+        caml_main(argv);
+        //caml_startup(argv);
+    }
 }
 
 void Llength_type_check (void *p, OPND_TYPE_T p_type){

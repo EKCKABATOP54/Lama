@@ -1,4 +1,4 @@
-var i, n, result;
+var i, n, result =0 ;
 
 fun fib (n) {
   var r;

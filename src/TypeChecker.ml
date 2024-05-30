@@ -1,8 +1,7 @@
 open GT
 open Language
 
-
-type lamaType =  
+(*type lamaType =  
                   Sexp 
                   | Int 
                   | String 
@@ -784,3 +783,6 @@ let check_expr (ctx, tdctx) expr = let typeDefCtx = collect_variant_defs expr in
                           let _ = check_annotations ctx expr in 
                           let _ = check_expr_type_flow ctx expr in 
                           ()
+
+
+                *)

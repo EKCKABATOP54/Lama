@@ -4,5 +4,6 @@
 *.cmo
 *.o
 .merlin
-
+_build
+regression
 .vscode

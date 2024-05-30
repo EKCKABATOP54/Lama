@@ -6,7 +6,7 @@ fun test2 (b) {
   a := b
 }
 
-var x, a, b;
+var x, a = 0, b;
 
 x := read ();
 

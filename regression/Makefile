@@ -18,7 +18,7 @@ $(TESTS): %: %.lama
         echo "Skipping regression/$*"; \
     else \
         echo "Running regression/$*"; \
-        LAMA=../runtime $(LAMAC) $< && cat $@.input | ./$@ > $@.log && diff $@.log orig/$@.log; \
+        LAMA=../runtime $(LAMAC) -dp -ds $< && cat $@.input | ./$@ > $@.log && diff $@.log orig/$@.log; \
     fi
 #	@echo "regression/$@"
 #	@cat $@.input | LAMA=../runtime $(LAMAC) -i $< > $@.log && diff $@.log orig/$@.log

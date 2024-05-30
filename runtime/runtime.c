@@ -1360,3 +1360,13 @@ PACKED_VALUE_TYPE default_return_memory_loc(){
   }    
   return memory;
 }
+
+char **lama_global_argv;
+
+void set_lama_global_argv(int argc, char *argv[]){
+    lama_global_argv = argv;
+}
+
+char ** get_lama_global_argv(){
+    return lama_global_argv;
+}

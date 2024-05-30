@@ -1,4 +1,4 @@
-open TypeChecker
+open Language
 
 exception Commandline_error of string
 
@@ -214,7 +214,9 @@ let[@ocaml.warning "-32"] main =
         cmd#dump_AST (snd prog);
         cmd#dump_source (snd prog);
         
-        TypeChecker.check_expr default_ctx p;
+        Language.typecheck_expr default_ctx p;
+        (*Printf.printf "TypeChecked";
+        *)
         
         match cmd#get_mode with
         | `Default | `Compile -> ignore @@ X86.build cmd prog
